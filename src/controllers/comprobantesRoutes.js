@@ -1,5 +1,5 @@
 import { Router } from "express";
-import ComprobanteService from "../services/comprobante-service.js";
+import ComprobanteService from "../services/comprobanteService.js";
 
 const router = Router();
 const svc = new ComprobanteService();

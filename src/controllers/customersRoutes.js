@@ -1,5 +1,5 @@
 import { Router } from "express";
-import CustomerService from "../services/customer-service.js";
+import CustomerService from "../services/customerService.js";
 
 const router = Router();
 const svc = new CustomerService();

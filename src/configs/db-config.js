@@ -1,7 +1,7 @@
 const config = {
-  host: "tu-endpoint-rds",   // 🔥 endpoint de AWS
+  host: "database-1.c3eyesi4ucpy.sa-east-1.rds.amazonaws.com",   // 🔥 endpoint de AWS
   user: "postgres",          // tu usuario
-  password: "tu_password",   // tu password
+  password: "dJuizitLudbM2Wt",   // tu password
   database: "postgres",      // o el nombre de tu DB
   port: 5432,               // ✅ PostgreSQL
 };

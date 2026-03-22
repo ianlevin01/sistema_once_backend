@@ -1,11 +1,11 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import customers from "./customers.routes.js";
-import products from "./products.routes.js";
-import remitos from "./remitos.routes.js";
-import comprobantes from "./comprobantes.routes.js";
-import cash from "./cash.routes.js";
+import customers from "./controllers/customersRoutes.js";
+import products from "./controllers/productsRoutes.js";
+import remitos from "./controllers/remitosRoutes.js";
+import comprobantes from "./controllers/comprobantesRoutes.js";
+import cash from "./controllers/cashRoutes.js";
 
 dotenv.config();
 
@@ -26,11 +26,11 @@ app.get("/health", (_, res) => {
 });
 
 // Rutas
-router.use("/customers", customers);
-router.use("/products", products);
-router.use("/remitos", remitos);
-router.use("/comprobantes", comprobantes);
-router.use("/cash", cash);
+app.use("/api/customers", customers);
+app.use("/api/products", products);
+app.use("/api/remitos", remitos);
+app.use("/api/comprobantes", comprobantes);
+app.use("/api/cash", cash);
 
 
 

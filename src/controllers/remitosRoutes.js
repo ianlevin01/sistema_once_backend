@@ -1,5 +1,5 @@
 import { Router } from "express";
-import RemitoService from "../services/remito-service.js";
+import RemitoService from "../services/remitoService.js";
 
 const router = Router();
 const svc = new RemitoService();

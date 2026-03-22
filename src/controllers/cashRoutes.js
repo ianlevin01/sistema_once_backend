@@ -1,5 +1,5 @@
 import { Router } from "express";
-import CashService from "../services/cash-service.js";
+import CashService from "../services/cashService.js";
 
 const router = Router();
 const svc = new CashService();
