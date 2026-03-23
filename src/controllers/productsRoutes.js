@@ -15,7 +15,6 @@ router.get("/search", async (req, res) => {
 router.get("/:id", async (req, res) => {
   const result = await svc.getById(req.params.id);
   if (!result) return res.status(404).json({ message: "Producto no encontrado" });
-
   return res.status(200).json(result);
 });
 

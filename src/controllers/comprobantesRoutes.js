@@ -8,7 +8,7 @@ const svc = new ComprobanteService();
 router.post("/", async (req, res) => {
   const { customer_id, user_id, payment_method, items } = req.body;
 
-  if (!customer_id || !user_id || !items) {
+  if (!customer_id || !user_id || !payment_method || !items?.length) {
     return res.status(400).json({ message: "Datos incompletos" });
   }
 

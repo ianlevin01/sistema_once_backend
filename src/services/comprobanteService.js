@@ -9,44 +9,44 @@ export default class ComprobanteService {
   paymentRepo = new PaymentRepository();
 
   async create(data) {
-    const client = await pool.connect();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-    try {
-      await client.query("BEGIN");
+    const total = data.items.reduce((acc, i) => acc + i.unit_price * i.quantity, 0);
 
-      let total = 0;
+    const order = await this.orderRepo.create({
+      customer_id:    data.customer_id,
+      user_id:        data.user_id,
+      total,
+      profit:         0,
+      status:         "completed",
+      // Campos nuevos
+      tipo:           data.tipo           || "Presupuesto",
+      vendedor:       data.vendedor       || null,
+      price_type:     data.price_type     || "precio_1",
+      texto_libre:    data.texto_libre    || null,
+      escenario:      data.escenario      || null,
+    }, client);
 
-      data.items.forEach(i => {
-        total += i.unit_price * i.quantity;
-      });
-
-      const order = await this.orderRepo.create({
-        customer_id: data.customer_id,
-        user_id: data.user_id,
-        total,
-        profit: 0,
-        status: "completed"
-      }, client);
-
-      for (let item of data.items) {
-        await this.itemRepo.create(item, order.id, client);
-      }
-
-      await this.paymentRepo.create({
-        method: data.payment_method,
-        amount: total
-      }, order.id, client);
-
-      await client.query("COMMIT");
-
-      return order;
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
+    for (const item of data.items) {
+      await this.itemRepo.create(item, order.id, client);
     }
+
+    await this.paymentRepo.create({
+      method: data.payment_method,
+      amount: total,
+    }, order.id, client);
+
+    await client.query("COMMIT");
+    return order;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
+}
 
   getById(id) {
     return this.orderRepo.getById(id);
