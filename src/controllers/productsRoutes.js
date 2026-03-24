@@ -1,5 +1,6 @@
 import { Router } from "express";
 import ProductService from "../services/productService.js";
+import { upload } from "../middlewares/upload.js";
 
 const router = Router();
 const svc = new ProductService();
@@ -18,14 +19,20 @@ router.get("/:id", async (req, res) => {
   return res.status(200).json(result);
 });
 
+router.get("/", async (req, res) => {
+  const { limit = 30, offset = 0 } = req.query;
+  const result = await svc.getPaginated(limit, offset);
+  return res.json(result);
+});
+
 // Crear producto
-router.post("/", async (req, res) => {
-  const result = await svc.create(req.body);
+router.post("/", upload.array("images"), async (req, res) => {
+  const result = await svc.create(req.body, req.files);
   return res.status(201).json(result);
 });
 
 // Modificar producto
-router.put("/:id", async (req, res) => {
+router.put("/:id", upload.array("images"),async (req, res) => {
   const result = await svc.update(req.params.id, req.body);
   return res.status(200).json(result);
 });
