@@ -8,7 +8,8 @@ export default class ProductService {
   async search(name) {
     return this.repo.search(name);
   }
-  // 🔥 helper centralizado
+
+  // ── Helper: URLs firmadas ───────────────────────────────────────────────────
   async addSignedUrlsToImages(images) {
     if (!images?.length) return [];
 
@@ -20,7 +21,27 @@ export default class ProductService {
     );
   }
 
-  // 🔥 PAGINADO (optimizado)
+  // ── Helper: guardar costo y precios ────────────────────────────────────────
+  async saveCostAndPrices(productId, p) {
+    const promises = [];
+
+    // Costo → inserta un nuevo registro en product_costs
+    if (p.cost != null && p.cost !== "") {
+      promises.push(this.repo.insertCost(productId, p.cost));
+    }
+
+    // Precios → upsert por price_type (precio_1 … precio_5)
+    for (let n = 1; n <= 5; n++) {
+      const val = p[`price_${n}`];
+      if (val != null && val !== "") {
+        promises.push(this.repo.upsertPrice(productId, `precio_${n}`, val));
+      }
+    }
+
+    await Promise.all(promises);
+  }
+
+  // ── GET PAGINADO ────────────────────────────────────────────────────────────
   async getPaginated(limit = 30, offset = 0) {
     const products = await this.repo.getPaginated(limit, offset);
 
@@ -32,7 +53,7 @@ export default class ProductService {
     );
   }
 
-  // 🔥 GET BY ID
+  // ── GET BY ID ───────────────────────────────────────────────────────────────
   async getById(id) {
     const product = await this.repo.getById(id);
 
@@ -42,66 +63,63 @@ export default class ProductService {
     };
   }
 
-  // 🔥 CREATE
-async create(p, files) {
-  const product = await this.repo.create(p);
-  if (files?.length) {
-    const uploads = await Promise.all(
-      files.map(file => this.s3.upload(file))
-    );
+  // ── CREATE ──────────────────────────────────────────────────────────────────
+  async create(p, files) {
+    const product = await this.repo.create(p);
 
-    await Promise.all(
-      uploads.map(key =>
-        this.repo.insertImage(product.id, key)
-      )
-    );
-  }
+    // Guardar costo y precios
+    await this.saveCostAndPrices(product.id, p);
 
-  return this.getById(product.id);
-}
-
-  // 🔥 UPDATE
-  async update(id, p, files) {
-    const product = await this.repo.update(id, p);
-
+    // Subir imágenes si las hay
     if (files?.length) {
-      // traer imágenes actuales
-      const current = await this.repo.getById(id);
-
-      // borrar de S3
-      await Promise.all(
-        current.images.map(img =>
-          this.s3.delete(img.key)
-        )
-      );
-
-      // borrar de DB
-      await this.repo.deleteImagesByProduct(id);
-
-      // subir nuevas
       const uploads = await Promise.all(
         files.map(file => this.s3.upload(file))
       );
 
       await Promise.all(
-        uploads.map(key =>
-          this.repo.insertImage(id, key)
-        )
+        uploads.map(key => this.repo.insertImage(product.id, key))
       );
     }
 
-    return this.getById(id); // 👈 siempre devolver completo
+    return this.getById(product.id);
   }
 
-  // 🔥 DELETE (opcional pero recomendable)
+  // ── UPDATE ──────────────────────────────────────────────────────────────────
+  async update(id, p, files) {
+    await this.repo.update(id, p);
+
+    // Actualizar costo y precios
+    await this.saveCostAndPrices(id, p);
+
+    // Reemplazar imágenes si se enviaron nuevas
+    if (files?.length) {
+      const current = await this.repo.getById(id);
+
+      await Promise.all(
+        current.images.map(img => this.s3.delete(img.key))
+      );
+
+      await this.repo.deleteImagesByProduct(id);
+
+      const uploads = await Promise.all(
+        files.map(file => this.s3.upload(file))
+      );
+
+      await Promise.all(
+        uploads.map(key => this.repo.insertImage(id, key))
+      );
+    }
+
+    return this.getById(id);
+  }
+
+  // ── DELETE ──────────────────────────────────────────────────────────────────
   async delete(id) {
     const product = await this.repo.getById(id);
 
     if (product.images?.length) {
       await Promise.all(
-        product.images.map(img =>
-          this.s3.delete(img.key)
-        )
+        product.images.map(img => this.s3.delete(img.key))
       );
     }
 
