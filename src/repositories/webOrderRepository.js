@@ -2,11 +2,14 @@ import pool from "../database/db.js";
 
 export default class WebOrderRepository {
 
-  // ── SELECT completo con items ──────────────────────────────
+  // ── SELECT completo con items y datos del cliente ──────────
   async getById(id) {
     const res = await pool.query(`
       SELECT
         w.*,
+        c.name     AS customer_name,
+        c.email    AS customer_email,
+        c.phone    AS customer_phone,
         COALESCE(
           (
             SELECT json_agg(
@@ -24,6 +27,7 @@ export default class WebOrderRepository {
           ), '[]'
         ) AS items
       FROM web_orders w
+      LEFT JOIN customers c ON c.id = w.customer_id
       WHERE w.id = $1
     `, [id]);
     return res.rows[0];
@@ -34,6 +38,9 @@ export default class WebOrderRepository {
     let query = `
       SELECT
         w.*,
+        c.name AS customer_name,
+        c.email AS customer_email,
+        c.phone AS customer_phone,
         COALESCE(
           (
             SELECT json_agg(
@@ -51,6 +58,7 @@ export default class WebOrderRepository {
           ), '[]'
         ) AS items
       FROM web_orders w
+      LEFT JOIN customers c ON c.id = w.customer_id
       WHERE 1=1
     `;
     const params = [];
@@ -73,7 +81,7 @@ export default class WebOrderRepository {
     }
     if (search) {
       params.push(`%${search}%`);
-      query += ` AND (w.customer_name ILIKE $${params.length} OR w.customer_city ILIKE $${params.length})`;
+      query += ` AND (c.name ILIKE $${params.length} OR c.email ILIKE $${params.length})`;
     }
 
     query += ` ORDER BY w.created_at DESC`;
@@ -86,18 +94,14 @@ export default class WebOrderRepository {
   async create(data, client) {
     const db = client || pool;
     const res = await db.query(`
-      INSERT INTO web_orders
-        (customer_name, customer_email, customer_phone, customer_city, observaciones, total, color)
-      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      INSERT INTO web_orders (customer_id, observaciones, total, color)
+      VALUES ($1, $2, $3, $4)
       RETURNING *
     `, [
-      data.customer_name,
-      data.customer_email  || null,
-      data.customer_phone  || null,
-      data.customer_city   || null,
-      data.observaciones   || null,
-      data.total           || 0,
-      data.color           || 'pending',
+      data.customer_id,
+      data.observaciones || null,
+      data.total         || 0,
+      data.color         || 'pending',
     ]);
     return res.rows[0];
   }
@@ -107,28 +111,22 @@ export default class WebOrderRepository {
     const db = client || pool;
     const res = await db.query(`
       UPDATE web_orders SET
-        customer_name  = COALESCE($1, customer_name),
-        customer_email = COALESCE($2, customer_email),
-        customer_phone = COALESCE($3, customer_phone),
-        customer_city  = COALESCE($4, customer_city),
-        observaciones  = COALESCE($5, observaciones),
-        total          = COALESCE($6, total),
-        color          = COALESCE($7, color),
-        reservado      = COALESCE($8, reservado),
-        order_id       = COALESCE($9, order_id),
-        updated_at     = NOW()
-      WHERE id = $10
+        customer_id   = COALESCE($1, customer_id),
+        observaciones = COALESCE($2, observaciones),
+        total         = COALESCE($3, total),
+        color         = COALESCE($4, color),
+        reservado     = COALESCE($5, reservado),
+        order_id      = COALESCE($6, order_id),
+        updated_at    = NOW()
+      WHERE id = $7
       RETURNING *
     `, [
-      data.customer_name  || null,
-      data.customer_email || null,
-      data.customer_phone || null,
-      data.customer_city  || null,
-      data.observaciones  || null,
-      data.total          ?? null,
-      data.color          || null,
-      data.reservado      ?? null,
-      data.order_id       || null,
+      data.customer_id  || null,
+      data.observaciones || null,
+      data.total         ?? null,
+      data.color         || null,
+      data.reservado     ?? null,
+      data.order_id      || null,
       id,
     ]);
     return res.rows[0];
@@ -174,5 +172,17 @@ export default class WebOrderRepository {
         item.unit_price || 0,
       ]);
     }
+  }
+
+  // ── Crear customer nuevo ───────────────────────────────────
+  async createCustomer(data, client) {
+    const db = client || pool;
+    const res = await db.query(
+      `INSERT INTO customers (name, email, phone, type)
+       VALUES ($1, $2, $3, 'web')
+       RETURNING *`,
+      [data.name, data.email || null, data.phone || null]
+    );
+    return res.rows[0];
   }
 }

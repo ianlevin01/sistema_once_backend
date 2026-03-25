@@ -26,18 +26,36 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST crear pedido
+// Body: { customer_id?, customer_name?, customer_email?, customer_phone?, items, observaciones? }
+// Si no viene customer_id → se crea un customer nuevo con customer_name/email/phone
 router.post("/", async (req, res) => {
-  const { customer_name, items } = req.body;
-  if (!customer_name) return res.status(400).json({ message: "Nombre de cliente requerido" });
-  if (!items?.length)  return res.status(400).json({ message: "Items requeridos" });
-  const result = await svc.create(req.body);
-  return res.status(201).json(result);
+  const { customer_id, customer_name, items } = req.body;
+
+  if (!customer_id && !customer_name) {
+    return res.status(400).json({ message: "Se requiere customer_id o datos del cliente (customer_name)" });
+  }
+  if (!items?.length) {
+    return res.status(400).json({ message: "Items requeridos" });
+  }
+
+  try {
+    const result = await svc.create(req.body);
+    // Si se creó un customer nuevo, la respuesta incluye new_customer
+    // para que el front pueda mostrarle el ID al usuario
+    return res.status(201).json(result);
+  } catch (err) {
+    return res.status(400).json({ message: err.message });
+  }
 });
 
 // PUT editar pedido completo + items
 router.put("/:id", async (req, res) => {
-  const result = await svc.update(req.params.id, req.body);
-  return res.status(200).json(result);
+  try {
+    const result = await svc.update(req.params.id, req.body);
+    return res.status(200).json(result);
+  } catch (err) {
+    return res.status(400).json({ message: err.message });
+  }
 });
 
 // PATCH color

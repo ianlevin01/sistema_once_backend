@@ -8,6 +8,8 @@ import comprobantes from "./controllers/comprobantesRoutes.js";
 import cash from "./controllers/cashRoutes.js";
 import aiRoutes from "./controllers/aiRoutes.js";
 import webOrders from "./controllers/webOrderRoutes.js";
+import cuentaCorrienteRoutes from "./controllers/cuentaCorrienteRoutes.js";
+
 
 dotenv.config();
 
@@ -37,6 +39,7 @@ app.use("/api/comprobantes", comprobantes);
 app.use("/api/cash", cash);
 app.use("/api/ai", aiRoutes);
 app.use("/api/web-orders", webOrders);
+app.use("/api/cuenta-corriente", cuentaCorrienteRoutes);
 
 
 
