@@ -88,11 +88,11 @@ async getById(id) {
   let params = [];
 
   if (from) {
-    params.push(from);
+    params.push(`${from} 00:00:00`);
     query += ` AND o.created_at >= $${params.length}`;
   }
   if (to) {
-    params.push(to);
+    params.push(`${to} 23:59:59`);
     query += ` AND o.created_at <= $${params.length}`;
   }
 

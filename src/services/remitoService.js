@@ -13,7 +13,7 @@ async createRemito(data) {
 
     const order = await this.orderRepo.create({
       customer_id: data.customer_id || null,
-      user_id:     data.user_id,
+      user_id:     null, // TODO: reemplazar con el ID del usuario autenticado
       total:       0,
       profit:      0,
       status:      "remito",

@@ -8,7 +8,7 @@ const svc = new RemitoService();
 router.post("/", async (req, res) => {
   const { origen, destino, user_id, price_type, items } = req.body;
 
-  if (!origen || !destino || !user_id || !items) {
+  if (!origen || !destino || !items) {
     return res.status(400).json({ message: "Datos incompletos" });
   }
 
