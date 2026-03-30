@@ -18,7 +18,8 @@ router.post("/", async (req, res) => {
 
 // Listar
 router.get("/", async (req, res) => {
-  const result = await svc.getAll();
+  const { from, to } = req.query;
+  const result = await svc.getAll({ from, to });
   return res.status(200).json(result);
 });
 

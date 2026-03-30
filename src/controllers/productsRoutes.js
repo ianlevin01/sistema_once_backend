@@ -5,6 +5,12 @@ import { upload } from "../middlewares/upload.js";
 const router = Router();
 const svc = new ProductService();
 
+// Obtener todas las categorías
+router.get("/categories", async (req, res) => {
+  const result = await svc.getCategories();
+  return res.status(200).json(result);
+});
+
 // Buscar productos
 router.get("/search", async (req, res) => {
   const { name } = req.query;
@@ -20,8 +26,8 @@ router.get("/:id", async (req, res) => {
 });
 
 router.get("/", async (req, res) => {
-  const { limit = 30, offset = 0 } = req.query;
-  const result = await svc.getPaginated(limit, offset);
+  const { limit = 30, offset = 0, category_id } = req.query;
+  const result = await svc.getPaginated(limit, offset, category_id ?? null);
   return res.json(result);
 });
 
@@ -32,8 +38,8 @@ router.post("/", upload.array("images"), async (req, res) => {
 });
 
 // Modificar producto
-router.put("/:id", upload.array("images"),async (req, res) => {
-  const result = await svc.update(req.params.id, req.body);
+router.put("/:id", upload.array("images"), async (req, res) => {
+  const result = await svc.update(req.params.id, req.body, req.files);
   return res.status(200).json(result);
 });
 

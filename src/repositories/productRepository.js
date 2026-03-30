@@ -26,7 +26,10 @@ export default class ProductRepository {
     return res.rows;
   }
 
-  async getPaginated(limit = 30, offset = 0) {
+  async getPaginated(limit = 30, offset = 0, categoryId = null) {
+    const params      = categoryId ? [limit, offset, categoryId] : [limit, offset];
+    const whereClause = categoryId ? "WHERE p.category_id = $3" : "";
+
     const res = await pool.query(`
       SELECT
         p.*,
@@ -67,11 +70,18 @@ export default class ProductRepository {
 
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
-
+      ${whereClause}
       ORDER BY p.created_at DESC
       LIMIT $1 OFFSET $2
-    `, [limit, offset]);
+    `, params);
 
+    return res.rows;
+  }
+
+  async getCategories() {
+    const res = await pool.query(
+      "SELECT id, name FROM categories ORDER BY name ASC"
+    );
     return res.rows;
   }
 

@@ -26,14 +26,20 @@ router.get("/:id", async (req, res) => {
 
 // Listar remitos
 router.get("/", async (req, res) => {
-  const result = await svc.getAll();
+  const { from, to } = req.query;
+  const result = await svc.getAll({ from, to });
   return res.status(200).json(result);
 });
 
 // Eliminar remito
 router.delete("/:id", async (req, res) => {
-  await svc.delete(req.params.id);
-  return res.status(200).json({ message: "Remito eliminado" });
+  try {
+    await svc.delete(req.params.id);
+    return res.status(200).json({ message: "Remito eliminado" });
+  } catch (err) {
+    console.error("Error eliminando remito:", err);
+    return res.status(500).json({ message: "Error eliminando remito" });
+  }
 });
 
 export default router;

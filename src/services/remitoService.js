@@ -40,9 +40,12 @@ async createRemito(data) {
     return this.orderRepo.getById(id);
   }
 
-  getAll() {
-    return this.orderRepo.getAll({});
+  getAll({ from, to } = {}) {
+    return this.orderRepo.getAllByTipo("Remito", { from, to });
   }
 
-  delete(id) {}
+  async delete(id) {
+    await pool.query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
+    await pool.query(`DELETE FROM orders WHERE id = $1`, [id]);
+  }
 }

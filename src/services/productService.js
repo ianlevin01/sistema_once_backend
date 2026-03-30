@@ -41,9 +41,13 @@ export default class ProductService {
     await Promise.all(promises);
   }
 
+  async getCategories() {
+    return this.repo.getCategories();
+  }
+
   // ── GET PAGINADO ────────────────────────────────────────────────────────────
-  async getPaginated(limit = 30, offset = 0) {
-    const products = await this.repo.getPaginated(limit, offset);
+  async getPaginated(limit = 30, offset = 0, categoryId = null) {
+    const products = await this.repo.getPaginated(limit, offset, categoryId);
 
     return Promise.all(
       products.map(async (product) => ({
@@ -91,23 +95,27 @@ export default class ProductService {
     // Actualizar costo y precios
     await this.saveCostAndPrices(id, p);
 
-    // Reemplazar imágenes si se enviaron nuevas
+    // keepImages: array de keys S3 que el frontend quiere conservar
+    const keepKeys = p.keepImages
+      ? (Array.isArray(p.keepImages) ? p.keepImages : [p.keepImages])
+      : null;
+
+    const current = await this.repo.getById(id);
+    const currentImages = current.images || [];
+
+    if (keepKeys !== null) {
+      // Borrar de S3 y de la BD las imágenes que NO están en keepKeys
+      const toDelete = currentImages.filter((img) => !keepKeys.includes(img.key));
+      await Promise.all(toDelete.map((img) => this.s3.delete(img.key)));
+      if (toDelete.length) {
+        await Promise.all(toDelete.map((img) => this.repo.deleteImageByKey(img.key)));
+      }
+    }
+
+    // Subir imágenes nuevas si las hay
     if (files?.length) {
-      const current = await this.repo.getById(id);
-
-      await Promise.all(
-        current.images.map(img => this.s3.delete(img.key))
-      );
-
-      await this.repo.deleteImagesByProduct(id);
-
-      const uploads = await Promise.all(
-        files.map(file => this.s3.upload(file))
-      );
-
-      await Promise.all(
-        uploads.map(key => this.repo.insertImage(id, key))
-      );
+      const uploads = await Promise.all(files.map((file) => this.s3.upload(file)));
+      await Promise.all(uploads.map((key) => this.repo.insertImage(id, key)));
     }
 
     return this.getById(id);

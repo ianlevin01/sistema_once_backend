@@ -7,8 +7,8 @@ export default class CashService {
     return this.repo.create(mov);
   }
 
-  getAll() {
-    return this.repo.getAll();
+  getAll({ from, to } = {}) {
+    return this.repo.getAll({ from, to });
   }
 
   getById(id) {

@@ -13,10 +13,10 @@ export default class S3Service {
 
   async upload(file) {
     const s3 = new S3Client({
-  region: process.env.AWS_REGION || "sa-east-1",
+  region:"sa-east-1",
 });
 
-const BUCKET = process.env.AWS_BUCKET;
+const BUCKET ="onces3";
 
     const key = `products/${uuid()}-${file.originalname}`;
 
@@ -32,10 +32,10 @@ const BUCKET = process.env.AWS_BUCKET;
 
   async delete(key) {
     const s3 = new S3Client({
-  region: process.env.AWS_REGION || "sa-east-1",
+  region: "sa-east-1",
 });
 
-const BUCKET = process.env.AWS_BUCKET;
+const BUCKET = "onces3";
     await s3.send(new DeleteObjectCommand({
       Bucket: BUCKET,
       Key: key
@@ -44,10 +44,10 @@ const BUCKET = process.env.AWS_BUCKET;
 
   async getSignedUrl(key) {
     const s3 = new S3Client({
-  region: process.env.AWS_REGION || "sa-east-1",
+  region: "sa-east-1",
 });
 
-const BUCKET = process.env.AWS_BUCKET;
+const BUCKET = "onces3";
 
     const command = new GetObjectCommand({
       Bucket: BUCKET,

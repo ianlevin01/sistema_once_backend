@@ -10,8 +10,13 @@ export default class CashRepository {
     return res.rows[0];
   }
 
-  async getAll() {
-    const res = await pool.query("SELECT * FROM cash_movements");
+  async getAll({ from, to } = {}) {
+    let query = "SELECT * FROM cash_movements WHERE 1=1";
+    const params = [];
+    if (from) { params.push(`${from} 00:00:00`); query += ` AND created_at >= $${params.length}`; }
+    if (to)   { params.push(`${to} 23:59:59`);   query += ` AND created_at <= $${params.length}`; }
+    query += " ORDER BY created_at DESC";
+    const res = await pool.query(query, params);
     return res.rows;
   }
 
