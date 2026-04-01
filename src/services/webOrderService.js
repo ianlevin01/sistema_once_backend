@@ -1,21 +1,65 @@
 import pool from "../database/db.js";
 import WebOrderRepository from "../repositories/webOrderRepository.js";
+import ComprobanteService from "./comprobanteService.js";
 
 export default class WebOrderService {
-  repo = new WebOrderRepository();
+  repo        = new WebOrderRepository();
+  comproSvc   = new ComprobanteService();
 
   getAll(filters)     { return this.repo.getAll(filters); }
   getById(id)         { return this.repo.getById(id); }
   setColor(id, color) { return this.repo.setColor(id, color); }
   delete(id)          { return this.repo.delete(id); }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // SET RESERVADO
+  // Cuando reservado pasa a TRUE → crea una Nota de Pedido automáticamente
+  // ─────────────────────────────────────────────────────────────────────────
   async setReservado(id, reservado) {
-    return this.repo.setReservado(id, reservado);
+    const result = await this.repo.setReservado(id, reservado);
+
+    if (reservado) {
+      // Cargar el pedido completo para tener items y cliente
+      const webOrder = await this.repo.getById(id);
+
+      if (webOrder && webOrder.items && webOrder.items.length > 0) {
+        // Determinar customer_id: si el pedido web tiene uno, usarlo
+        const customerId = webOrder.customer_id || null;
+
+        // Mapear items del pedido web al formato de comprobante
+        const items = webOrder.items.map((i) => ({
+          product_id: i.product_id || null,
+          quantity:   i.quantity,
+          unit_price: Number(i.unit_price || 0),
+        }));
+
+        try {
+          // Crear la Nota de Pedido (también suma stock_reserva automáticamente)
+          await this.comproSvc.create({
+            customer_id:    customerId,
+            user_id:        null,
+            payment_method: "Contado",
+            tipo:           "Nota de Pedido",
+            vendedor:       null,
+            price_type:     "precio_1",
+            texto_libre:    webOrder.observaciones || null,
+            escenario:      null,
+            web_order_id:   id,
+            items,
+          });
+        } catch (err) {
+          console.error("Error creando Nota de Pedido desde pedido web:", err);
+          // No propagar: el reservado ya se marcó, solo loguear el error
+        }
+      }
+    }
+
+    return result;
   }
 
-  // Crear pedido web
-  // - Si viene customer_id: lo usa directamente
-  // - Si no viene: crea un customer nuevo y lo asigna
+  // ─────────────────────────────────────────────────────────────────────────
+  // CREATE
+  // ─────────────────────────────────────────────────────────────────────────
   async create(data) {
     const client = await pool.connect();
     try {
@@ -25,7 +69,6 @@ export default class WebOrderService {
       let newCustomer = null;
 
       if (!customerId) {
-        // Crear customer nuevo con los datos del formulario
         if (!data.customer_name) throw new Error("Se requiere nombre del cliente");
         newCustomer = await this.repo.createCustomer({
           name:  data.customer_name,
@@ -52,8 +95,6 @@ export default class WebOrderService {
 
       const result = await this.repo.getById(order.id);
 
-      // Si se creó un customer nuevo, lo incluimos en la respuesta
-      // para que el front pueda informarle al cliente su nuevo ID
       if (newCustomer) {
         return { ...result, new_customer: newCustomer };
       }
@@ -67,7 +108,9 @@ export default class WebOrderService {
     }
   }
 
-  // Editar pedido + reemplazar items
+  // ─────────────────────────────────────────────────────────────────────────
+  // UPDATE
+  // ─────────────────────────────────────────────────────────────────────────
   async update(id, data) {
     const client = await pool.connect();
     try {

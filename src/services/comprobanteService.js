@@ -10,6 +10,12 @@ export default class ComprobanteService {
   paymentRepo = new PaymentRepository();
   ccRepo      = new CuentaCorrienteRepository();
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // CREATE
+  // Parámetros extra respecto al original:
+  //   data.source_nota_id   — si viene de una Nota de Pedido, su ID (para eliminarla y mover reserva)
+  //   data.removed_items    — items que se quitaron al presupuestar (para crear nota paralela)
+  // ─────────────────────────────────────────────────────────────────────────
   async create(data) {
     const client = await pool.connect();
     try {
@@ -17,7 +23,7 @@ export default class ComprobanteService {
 
       const total = data.items.reduce((acc, i) => acc + i.unit_price * i.quantity, 0);
 
-      // Crear la orden
+      // ── Crear la orden principal ─────────────────────────────────────────
       const order = await this.orderRepo.create({
         customer_id:  data.customer_id,
         user_id:      data.user_id,
@@ -31,14 +37,12 @@ export default class ComprobanteService {
         escenario:    data.escenario   || null,
       }, client);
 
-      // Crear items
       for (const item of data.items) {
         await this.itemRepo.create(item, order.id, client);
       }
 
-      // Crear pago solo si el método NO es cuenta corriente
+      // ── Pago ─────────────────────────────────────────────────────────────
       const esCuentaCorriente = data.payment_method === "Cta Cte";
-
       if (!esCuentaCorriente) {
         await this.paymentRepo.create({
           method: data.payment_method,
@@ -46,10 +50,8 @@ export default class ComprobanteService {
         }, order.id, client);
       }
 
-      // Si el tipo es "Presupuesto" o "Presupuesto Web" y el pago es cuenta corriente
-      // → generar débito en la cuenta corriente del cliente
+      // ── Cuenta corriente ─────────────────────────────────────────────────
       const esPresupuesto = data.tipo === "Presupuesto" || data.tipo === "Presupuesto Web";
-
       if (esPresupuesto && esCuentaCorriente && data.customer_id) {
         const cuenta = await this.ccRepo.getOrCreate(data.customer_id, client);
         await this.ccRepo.addMovimiento({
@@ -61,12 +63,115 @@ export default class ComprobanteService {
         }, client);
       }
 
-      // Si viene de un pedido web, vincular la orden al web_order
+      // ── Vincular pedido web ───────────────────────────────────────────────
       if (data.web_order_id) {
         await client.query(
           `UPDATE web_orders SET order_id = $1, updated_at = now() WHERE id = $2`,
           [order.id, data.web_order_id]
         );
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // LÓGICA DE NOTA DE PEDIDO → PRESUPUESTO
+      // Si se está convirtiendo una Nota de Pedido a Presupuesto:
+      //   1. Descontar stock_reserva de los items presupuestados
+      //   2. Descontar stock real (suma de todos los warehouses) de los items presupuestados
+      //   3. Crear nota paralela con los items que se eliminaron (si los hay)
+      //   4. Eliminar la nota de pedido original
+      // ─────────────────────────────────────────────────────────────────────
+      if (data.source_nota_id && esPresupuesto) {
+
+        // 1 & 2: Por cada item del presupuesto, ajustar stock_reserva y stock real
+        for (const item of data.items) {
+          if (!item.product_id) continue;
+
+          // Descontar de stock_reserva
+          await client.query(
+            `UPDATE products
+             SET stock_reserva = GREATEST(0, stock_reserva - $1)
+             WHERE id = $2`,
+            [item.quantity, item.product_id]
+          );
+
+          // Descontar del stock real (primer warehouse que tenga suficiente, o distribuido)
+          // Estrategia: descontar del warehouse con más stock primero
+          const stockRows = await client.query(
+            `SELECT s.id, s.quantity, w.name
+             FROM stock s
+             JOIN warehouses w ON w.id = s.warehouse_id
+             WHERE s.product_id = $1
+             ORDER BY s.quantity DESC`,
+            [item.product_id]
+          );
+
+          let remaining = item.quantity;
+          for (const row of stockRows.rows) {
+            if (remaining <= 0) break;
+            const deduct = Math.min(remaining, row.quantity);
+            await client.query(
+              `UPDATE stock SET quantity = quantity - $1 WHERE id = $2`,
+              [deduct, row.id]
+            );
+            remaining -= deduct;
+          }
+        }
+
+        // 3: Crear nota paralela con items eliminados (si los hay)
+        if (data.removed_items && data.removed_items.length > 0) {
+          const removedTotal = data.removed_items.reduce(
+            (acc, i) => acc + (i.unit_price || 0) * i.quantity, 0
+          );
+
+          const notaParalela = await this.orderRepo.create({
+            customer_id:  data.customer_id,
+            user_id:      null,
+            total:        removedTotal,
+            profit:       0,
+            status:       "completed",
+            tipo:         "Nota de Pedido",
+            vendedor:     data.vendedor    || null,
+            price_type:   data.price_type  || "precio_1",
+            texto_libre:  data.texto_libre || null,
+            escenario:    data.escenario   || null,
+          }, client);
+
+          for (const item of data.removed_items) {
+            await this.itemRepo.create(item, notaParalela.id, client);
+          }
+
+          // Los items de la nota paralela suman a stock_reserva
+          for (const item of data.removed_items) {
+            if (!item.product_id) continue;
+            await client.query(
+              `UPDATE products SET stock_reserva = stock_reserva + $1 WHERE id = $2`,
+              [item.quantity, item.product_id]
+            );
+          }
+        }
+
+        // 4: Eliminar la nota de pedido original
+        await client.query(
+          `DELETE FROM order_items WHERE order_id = $1`,
+          [data.source_nota_id]
+        );
+        await client.query(
+          `DELETE FROM orders WHERE id = $1`,
+          [data.source_nota_id]
+        );
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Si se crea una NOTA DE PEDIDO nueva (no desde otra nota),
+      // sumar los items a stock_reserva
+      // ─────────────────────────────────────────────────────────────────────
+      if ((data.tipo === "Nota de Pedido") && !data.source_nota_id) {
+        for (const item of data.items) {
+          if (!item.product_id) continue;
+          await client.query(
+            `UPDATE products SET stock_reserva = stock_reserva + $1 WHERE id = $2`,
+            [item.quantity, item.product_id]
+          );
+        }
       }
 
       await client.query("COMMIT");
@@ -82,26 +187,18 @@ export default class ComprobanteService {
   getById(id)     { return this.orderRepo.getById(id); }
   getAll(filters) { return this.orderRepo.getAll(filters); }
 
-  /**
-   * Listado agrupado para la vista CajaListado.
-   * Devuelve: { presupuestos, notasPedido, remitos }
-   * filtrado por rango de fecha (from/to).
-   */
+  // ─────────────────────────────────────────────────────────────────────────
+  // GET LISTADO AGRUPADO para CajaListado
+  // ─────────────────────────────────────────────────────────────────────────
   async getListado({ from, to } = {}) {
     const client = await pool.connect();
     try {
       const dateFrom = from ? `${from} 00:00:00` : "1970-01-01";
       const dateTo   = to   ? `${to} 23:59:59`   : "2099-12-31";
 
-      // Presupuestos y Presupuestos Web
       const presRes = await client.query(`
         SELECT
-          o.id,
-          o.tipo,
-          o.created_at,
-          o.total,
-          o.vendedor,
-          o.texto_libre,
+          o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
           c.name AS customer_name,
           p.method AS payment_method
         FROM orders o
@@ -112,17 +209,10 @@ export default class ComprobanteService {
         ORDER BY o.created_at DESC
       `, [dateFrom, dateTo]);
 
-      // Notas de Pedido (reservas) — con sus items para poder presupuestar
       const notasRes = await client.query(`
         SELECT
-          o.id,
-          o.tipo,
-          o.created_at,
-          o.total,
-          o.vendedor,
-          o.texto_libre,
-          o.customer_id,
-          c.name AS customer_name
+          o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
+          o.customer_id, c.name AS customer_name
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         WHERE o.tipo = 'Nota de Pedido'
@@ -130,7 +220,6 @@ export default class ComprobanteService {
         ORDER BY o.created_at DESC
       `, [dateFrom, dateTo]);
 
-      // Cargar items de las notas de pedido
       const notasConItems = await Promise.all(
         notasRes.rows.map(async (nota) => {
           const itemsRes = await client.query(`
@@ -143,30 +232,68 @@ export default class ComprobanteService {
         })
       );
 
-      // Remitos
       const remitosRes = await client.query(`
         SELECT
-          o.id,
-          o.created_at,
-          o.total,
-          o.vendedor,
-          o.origen,
-          o.destino
+          o.id, o.created_at, o.total, o.vendedor, o.origen, o.destino
         FROM orders o
         WHERE o.tipo = 'Remito'
           AND o.created_at BETWEEN $1 AND $2
         ORDER BY o.created_at DESC
       `, [dateFrom, dateTo]);
 
+      // También cargar items de remitos para imprimir
+      const remitosConItems = await Promise.all(
+        remitosRes.rows.map(async (r) => {
+          const itemsRes = await client.query(`
+            SELECT oi.*, p.name, p.code
+            FROM order_items oi
+            LEFT JOIN products p ON p.id = oi.product_id
+            WHERE oi.order_id = $1
+          `, [r.id]);
+          return { ...r, items: itemsRes.rows };
+        })
+      );
+
       return {
         presupuestos: presRes.rows,
         notasPedido:  notasConItems,
-        remitos:      remitosRes.rows,
+        remitos:      remitosConItems,
       };
     } finally {
       client.release();
     }
   }
 
-  delete(id) { /* opcional */ }
+  async delete(id) {
+    // Al eliminar una Nota de Pedido, liberar stock_reserva
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Verificar si es nota de pedido
+      const orderRes = await client.query(
+        `SELECT tipo FROM orders WHERE id = $1`, [id]
+      );
+      if (orderRes.rows[0]?.tipo === "Nota de Pedido") {
+        const itemsRes = await client.query(
+          `SELECT product_id, quantity FROM order_items WHERE order_id = $1`, [id]
+        );
+        for (const item of itemsRes.rows) {
+          await client.query(
+            `UPDATE products SET stock_reserva = GREATEST(0, stock_reserva - $1) WHERE id = $2`,
+            [item.quantity, item.product_id]
+          );
+        }
+      }
+
+      await client.query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
+      await client.query(`DELETE FROM orders WHERE id = $1`, [id]);
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 }

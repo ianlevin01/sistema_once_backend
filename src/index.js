@@ -10,7 +10,7 @@ import aiRoutes from "./controllers/aiRoutes.js";
 import webOrders from "./controllers/webOrderRoutes.js";
 import cuentaCorrienteRoutes from "./controllers/cuentaCorrienteRoutes.js";
 import vendedoresRoutes from "./controllers/vendedoresRoutes.js";
-
+import config from "./controllers/configRoutes.js";
 
 dotenv.config();
 
@@ -42,7 +42,7 @@ app.use("/api/ai", aiRoutes);
 app.use("/api/web-orders", webOrders);
 app.use("/api/cuenta-corriente", cuentaCorrienteRoutes);
 app.use("/api/vendedores", vendedoresRoutes);
-
+app.use("/api/config", config);
 
 
 // Server
