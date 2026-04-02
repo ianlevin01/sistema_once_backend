@@ -179,4 +179,88 @@ export default class CuentaCorrienteRepository {
       client.release();
     }
   }
+
+  // ── Registrar cobranza (CC + cash_movements) ────────────────
+  async registrarCobranza(customerId, { monto, concepto, metodo_pago }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. Obtener datos del cliente para guardar el nombre en cash_movements
+      const custRes = await client.query(
+        `SELECT name FROM customers WHERE id = $1`, [customerId]
+      );
+      const customerName = custRes.rows[0]?.name || "";
+
+      // 2. Crear o recuperar la cuenta corriente
+      const cuenta = await this.getOrCreate(customerId, client);
+
+      // 3. Insertar movimiento en cc_movimientos (con metodo_pago)
+      await client.query(
+        `INSERT INTO cc_movimientos (cuenta_corriente_id, tipo, concepto, monto, metodo_pago)
+         VALUES ($1, 'pago', $2, $3, $4)`,
+        [cuenta.id, concepto || "Cobranza", monto, metodo_pago]
+      );
+
+      // 4. Actualizar saldo de la cuenta corriente
+      const updated = await client.query(
+        `UPDATE cuentas_corrientes
+         SET saldo = saldo - $1, updated_at = NOW()
+         WHERE id = $2
+         RETURNING *`,
+        [monto, cuenta.id]
+      );
+
+      // 5. Registrar en cash_movements como ingreso
+      await client.query(
+        `INSERT INTO cash_movements (type, source, amount, reference_id)
+         VALUES ('ingreso', $1, $2, $3)`,
+        [metodo_pago, monto, cuenta.id]
+      );
+
+      await client.query("COMMIT");
+      return updated.rows[0];
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  // ── Obtener cobranzas por rango de fecha ────────────────────
+  async getCobranzas(from, to) {
+    const params = [];
+    let where = `WHERE m.tipo = 'pago' AND m.metodo_pago IS NOT NULL`;
+
+    if (from) {
+      params.push(from);
+      where += ` AND m.created_at::date >= $${params.length}`;
+    }
+    if (to) {
+      params.push(to);
+      where += ` AND m.created_at::date <= $${params.length}`;
+    }
+
+    const res = await pool.query(`
+      SELECT
+        m.id,
+        m.created_at,
+        m.monto,
+        m.concepto,
+        m.metodo_pago,
+        m.order_id,
+        c.name    AS customer_name,
+        c.id      AS customer_id,
+        o.tipo    AS order_tipo
+      FROM cc_movimientos m
+      JOIN cuentas_corrientes cc ON cc.id = m.cuenta_corriente_id
+      JOIN customers c ON c.id = cc.customer_id
+      LEFT JOIN orders o ON o.id = m.order_id
+      ${where}
+      ORDER BY m.created_at DESC
+    `, params);
+
+    return res.rows;
+  }
 }

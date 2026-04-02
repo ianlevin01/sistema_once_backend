@@ -85,6 +85,14 @@ export default class ProductRepository {
     return res.rows;
   }
 
+  async createCategory(name, parentId = null) {
+    const res = await pool.query(
+      `INSERT INTO categories (name, parent_id) VALUES ($1, $2) RETURNING id, name, parent_id`,
+      [name, parentId]
+    );
+    return res.rows[0];
+  }
+
   async getById(id) {
     const res = await pool.query(`
       SELECT
@@ -175,10 +183,11 @@ export default class ProductRepository {
         origen,
         qxb,
         punto_pedido,
-        video_url
+        video_url,
+        costo_usd
       )
       VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
       )
       RETURNING *`,
       [
@@ -195,7 +204,8 @@ export default class ProductRepository {
         p.origen,
         p.qxb,
         p.punto_pedido,
-        p.video_url
+        p.video_url,
+        p.costo_usd ?? null,
       ]
     );
 
@@ -218,8 +228,9 @@ export default class ProductRepository {
         origen=$11,
         qxb=$12,
         punto_pedido=$13,
-        video_url=$14
-      WHERE id=$15
+        video_url=$14,
+        costo_usd=$15
+      WHERE id=$16
       RETURNING *`,
       [
         p.name,
@@ -236,6 +247,7 @@ export default class ProductRepository {
         p.qxb,
         p.punto_pedido,
         p.video_url,
+        p.costo_usd ?? null,
         id
       ]
     );

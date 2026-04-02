@@ -11,6 +11,14 @@ router.get("/categories", async (req, res) => {
   return res.status(200).json(result);
 });
 
+// Crear una nueva categoría
+router.post("/categories", async (req, res) => {
+  const { name, parent_id } = req.body;
+  if (!name?.trim()) return res.status(400).json({ message: "El nombre es obligatorio" });
+  const result = await svc.createCategory(name.trim(), parent_id ?? null);
+  return res.status(201).json(result);
+});
+
 // Buscar productos
 router.get("/search", async (req, res) => {
   const { name } = req.query;

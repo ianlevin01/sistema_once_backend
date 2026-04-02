@@ -1,10 +1,10 @@
 import { Router } from "express";
 import pool from "../database/db.js";
+import { invalidatePriceConfigCache } from "../services/productService.js";
 
 const router = Router();
 
 // GET /config/precios
-// Devuelve la configuración de precios global
 router.get("/precios", async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -21,7 +21,6 @@ router.get("/precios", async (req, res) => {
 });
 
 // PUT /config/precios
-// Actualiza (o crea) la configuración de precios
 router.put("/precios", async (req, res) => {
   const { cotizacion_dolar, pct_1, pct_2, pct_3, pct_4, pct_5 } = req.body;
 
@@ -33,10 +32,9 @@ router.put("/precios", async (req, res) => {
   }
 
   try {
-    // Upsert: si existe una fila la actualiza, si no la crea
     const existing = await pool.query(`SELECT id FROM price_config LIMIT 1`);
-
     let result;
+
     if (existing.rows.length) {
       const { rows } = await pool.query(
         `UPDATE price_config
@@ -54,6 +52,9 @@ router.put("/precios", async (req, res) => {
       );
       result = rows[0];
     }
+
+    // Invalida el caché en memoria para que el próximo getById use la nueva config
+    invalidatePriceConfigCache();
 
     return res.status(200).json(result);
   } catch (err) {

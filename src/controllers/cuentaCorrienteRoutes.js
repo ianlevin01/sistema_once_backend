@@ -43,7 +43,7 @@ router.post("/cliente/:customerId/pago", async (req, res) => {
   }
 });
 
-// POST agregar saldo a favor
+// POST agregar saldo a favor (legacy, se mantiene por compatibilidad)
 router.post("/cliente/:customerId/saldo", async (req, res) => {
   const { monto, concepto } = req.body;
   if (!monto || Number(monto) <= 0) return res.status(400).json({ message: "Monto inválido" });
@@ -52,6 +52,36 @@ router.post("/cliente/:customerId/saldo", async (req, res) => {
     return res.status(200).json(result);
   } catch (err) {
     console.error("Error en POST /cuenta-corriente/cliente/:id/saldo:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// POST registrar cobranza (con método de pago, se guarda en CC y en cash_movements)
+router.post("/cliente/:customerId/cobranza", async (req, res) => {
+  const { monto, concepto, metodo_pago } = req.body;
+  if (!monto || Number(monto) <= 0) return res.status(400).json({ message: "Monto inválido" });
+  if (!metodo_pago) return res.status(400).json({ message: "Método de pago obligatorio" });
+  try {
+    const result = await svc.registrarCobranza(req.params.customerId, {
+      monto:      Number(monto),
+      concepto:   concepto || "Cobranza",
+      metodo_pago,
+    });
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("Error en POST /cuenta-corriente/cliente/:id/cobranza:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// GET cobranzas por rango de fecha (para CajaListado)
+router.get("/cobranzas", async (req, res) => {
+  const { from, to } = req.query;
+  try {
+    const result = await svc.getCobranzas(from, to);
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("Error en GET /cuenta-corriente/cobranzas:", err);
     return res.status(500).json({ message: "Error interno" });
   }
 });

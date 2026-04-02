@@ -3,9 +3,11 @@ import CuentaCorrienteRepository from "../repositories/cuentaCorrienteRepository
 export default class CuentaCorrienteService {
   repo = new CuentaCorrienteRepository();
 
-  getAll()                          { return this.repo.getAll(); }
-  getByCustomer(customerId)         { return this.repo.getByCustomer(customerId); }
-  getOrCreate(customerId)           { return this.repo.getOrCreate(customerId); }
-  registrarPago(customerId, data)   { return this.repo.registrarPago(customerId, data); }
-  agregarSaldo(customerId, data)    { return this.repo.agregarSaldo(customerId, data); }
+  getAll()                              { return this.repo.getAll(); }
+  getByCustomer(customerId)             { return this.repo.getByCustomer(customerId); }
+  getOrCreate(customerId)               { return this.repo.getOrCreate(customerId); }
+  registrarPago(customerId, data)       { return this.repo.registrarPago(customerId, data); }
+  agregarSaldo(customerId, data)        { return this.repo.agregarSaldo(customerId, data); }
+  registrarCobranza(customerId, data)   { return this.repo.registrarCobranza(customerId, data); }
+  getCobranzas(from, to)               { return this.repo.getCobranzas(from, to); }
 }
