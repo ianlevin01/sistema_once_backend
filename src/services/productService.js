@@ -49,7 +49,26 @@ export default class ProductService {
   s3   = new S3Service();
 
   async search(name) {
-    return this.repo.search(name);
+    const [products, config] = await Promise.all([
+      this.repo.search(name),
+      getPriceConfig(),
+    ]);
+
+    return Promise.all(
+      products.map(async (product) => {
+        const costo_usd = product.costo_usd ? Number(product.costo_usd) : null;
+
+        const prices = costo_usd
+          ? buildComputedPrices(costo_usd, config)
+          : (product.prices ?? []);
+
+        return {
+          ...product,
+          prices,
+          images: await this.addSignedUrlsToImages(product.images),
+        };
+      })
+    );
   }
 
   async addSignedUrlsToImages(images) {
@@ -89,12 +108,26 @@ export default class ProductService {
   }
 
   async getPaginated(limit = 30, offset = 0, categoryId = null) {
-    const products = await this.repo.getPaginated(limit, offset, categoryId);
+    const [products, config] = await Promise.all([
+      this.repo.getPaginated(limit, offset, categoryId),
+      getPriceConfig(),
+    ]);
+
     return Promise.all(
-      products.map(async (product) => ({
-        ...product,
-        images: await this.addSignedUrlsToImages(product.images),
-      }))
+      products.map(async (product) => {
+        const costo_usd = product.costo_usd ? Number(product.costo_usd) : null;
+
+        // Si tiene costo_usd, calcular precios 1-5 igual que en getById
+        const prices = costo_usd
+          ? buildComputedPrices(costo_usd, config)
+          : (product.prices ?? []);
+
+        return {
+          ...product,
+          prices,
+          images: await this.addSignedUrlsToImages(product.images),
+        };
+      })
     );
   }
 

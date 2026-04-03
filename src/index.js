@@ -12,6 +12,7 @@ import cuentaCorrienteRoutes from "./controllers/cuentaCorrienteRoutes.js";
 import vendedoresRoutes from "./controllers/vendedoresRoutes.js";
 import config from "./controllers/configRoutes.js";
 import warehouses from "./controllers/warehousesRoutes.js";
+import shopAuthRouter from "./controllers/shopAuthRoutes.js";
 
 dotenv.config();
 
@@ -45,7 +46,7 @@ app.use("/api/cuenta-corriente", cuentaCorrienteRoutes);
 app.use("/api/vendedores", vendedoresRoutes);
 app.use("/api/config", config);
 app.use("/api/warehouses", warehouses);
-
+app.use("/api/shop", shopAuthRouter);
 
 // Server
 app.listen(PORT, "0.0.0.0", () => {

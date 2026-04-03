@@ -42,13 +42,14 @@ export default class ComprobanteService {
       }
 
       // ── Pago ─────────────────────────────────────────────────────────────
+      // Siempre guardamos el registro en payments para que el LEFT JOIN en
+      // getListado siempre encuentre el método de pago.
+      // Para Cta Cte el amount es 0 (el dinero se mueve por cuenta corriente).
       const esCuentaCorriente = data.payment_method === "Cta Cte";
-      if (!esCuentaCorriente) {
-        await this.paymentRepo.create({
-          method: data.payment_method,
-          amount: total,
-        }, order.id, client);
-      }
+      await this.paymentRepo.create({
+        method: data.payment_method,
+        amount: esCuentaCorriente ? 0 : total,
+      }, order.id, client);
 
       // ── Cuenta corriente ─────────────────────────────────────────────────
       const esPresupuesto = data.tipo === "Presupuesto" || data.tipo === "Presupuesto Web";

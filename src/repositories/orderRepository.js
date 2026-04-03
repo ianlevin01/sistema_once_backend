@@ -81,9 +81,11 @@ export default class OrderRepository {
     let query = `
       SELECT
         o.*,
-        c.name AS customer_name
+        c.name AS customer_name,
+        p.method AS payment_method
       FROM orders o
       LEFT JOIN customers c ON c.id = o.customer_id
+      LEFT JOIN payments  p ON p.order_id = o.id
       WHERE 1=1
     `;
     const params = [];
