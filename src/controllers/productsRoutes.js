@@ -34,8 +34,8 @@ router.get("/:id", async (req, res) => {
 });
 
 router.get("/", async (req, res) => {
-  const { limit = 30, offset = 0, category_id } = req.query;
-  const result = await svc.getPaginated(limit, offset, category_id ?? null);
+  const { limit = 30, offset = 0, category_id, sort = "default" } = req.query;
+  const result = await svc.getPaginated(limit, offset, category_id ?? null, sort);
   return res.json(result);
 });
 

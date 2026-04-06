@@ -23,6 +23,28 @@ export default class ComprobanteService {
 
       const total = data.items.reduce((acc, i) => acc + i.unit_price * i.quantity, 0);
 
+      // ── Si viene de una Nota de Pedido Web, el presupuesto es "Presupuesto Web" ──
+      let tipoFinal = data.tipo || "Presupuesto";
+      if (data.source_nota_id && (tipoFinal === "Presupuesto" || tipoFinal === "Presupuesto Web")) {
+        const notaOrig = await client.query(
+          "SELECT tipo FROM orders WHERE id = $1",
+          [data.source_nota_id]
+        );
+        if (notaOrig.rows[0]?.tipo === "Nota de Pedido Web") {
+          tipoFinal = "Presupuesto Web";
+          // Buscar el web_order que apunta a esta nota para actualizarlo después
+          if (!data.web_order_id) {
+            const webOrderRes = await client.query(
+              "SELECT id FROM web_orders WHERE order_id = $1 LIMIT 1",
+              [data.source_nota_id]
+            );
+            if (webOrderRes.rows[0]) {
+              data = { ...data, web_order_id: webOrderRes.rows[0].id };
+            }
+          }
+        }
+      }
+
       // ── Crear la orden principal ─────────────────────────────────────────
       const order = await this.orderRepo.create({
         customer_id:  data.customer_id,
@@ -30,7 +52,7 @@ export default class ComprobanteService {
         total,
         profit:       0,
         status:       "completed",
-        tipo:         data.tipo        || "Presupuesto",
+        tipo:         tipoFinal,
         vendedor:     data.vendedor    || null,
         price_type:   data.price_type  || "precio_1",
         texto_libre:  data.texto_libre || null,
@@ -52,7 +74,7 @@ export default class ComprobanteService {
       }, order.id, client);
 
       // ── Cuenta corriente ─────────────────────────────────────────────────
-      const esPresupuesto = data.tipo === "Presupuesto" || data.tipo === "Presupuesto Web";
+      const esPresupuesto = tipoFinal === "Presupuesto" || tipoFinal === "Presupuesto Web";
       if (esPresupuesto && esCuentaCorriente && data.customer_id) {
         const cuenta = await this.ccRepo.getOrCreate(data.customer_id, client);
         await this.ccRepo.addMovimiento({
@@ -129,7 +151,7 @@ export default class ComprobanteService {
             total:        removedTotal,
             profit:       0,
             status:       "completed",
-            tipo:         "Nota de Pedido",
+            tipo:         tipoFinal === "Presupuesto Web" ? "Nota de Pedido Web" : "Nota de Pedido",
             vendedor:     data.vendedor    || null,
             price_type:   data.price_type  || "precio_1",
             texto_libre:  data.texto_libre || null,
@@ -165,7 +187,7 @@ export default class ComprobanteService {
       // Si se crea una NOTA DE PEDIDO nueva (no desde otra nota),
       // sumar los items a stock_reserva
       // ─────────────────────────────────────────────────────────────────────
-      if ((data.tipo === "Nota de Pedido") && !data.source_nota_id) {
+      if ((data.tipo === "Nota de Pedido" || data.tipo === "Nota de Pedido Web") && !data.source_nota_id) {
         for (const item of data.items) {
           if (!item.product_id) continue;
           await client.query(
@@ -216,7 +238,7 @@ export default class ComprobanteService {
           o.customer_id, c.name AS customer_name
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
-        WHERE o.tipo = 'Nota de Pedido'
+        WHERE o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
           AND o.created_at BETWEEN $1 AND $2
         ORDER BY o.created_at DESC
       `, [dateFrom, dateTo]);
@@ -275,7 +297,7 @@ export default class ComprobanteService {
       const orderRes = await client.query(
         `SELECT tipo FROM orders WHERE id = $1`, [id]
       );
-      if (orderRes.rows[0]?.tipo === "Nota de Pedido") {
+      if (orderRes.rows[0]?.tipo === "Nota de Pedido" || orderRes.rows[0]?.tipo === "Nota de Pedido Web") {
         const itemsRes = await client.query(
           `SELECT product_id, quantity FROM order_items WHERE order_id = $1`, [id]
         );

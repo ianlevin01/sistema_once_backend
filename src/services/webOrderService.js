@@ -39,7 +39,7 @@ export default class WebOrderService {
             customer_id:    customerId,
             user_id:        null,
             payment_method: "Contado",
-            tipo:           "Nota de Pedido",
+            tipo:           "Nota de Pedido Web",
             vendedor:       null,
             price_type:     "precio_1",
             texto_libre:    webOrder.observaciones || null,

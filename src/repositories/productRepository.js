@@ -26,9 +26,29 @@ export default class ProductRepository {
     return res.rows;
   }
 
-  async getPaginated(limit = 30, offset = 0, categoryId = null) {
+  async getPaginated(limit = 30, offset = 0, categoryId = null, sort = "default") {
     const params      = categoryId ? [limit, offset, categoryId] : [limit, offset];
     const whereClause = categoryId ? "WHERE p.category_id = $3" : "";
+
+    const ORDER_MAP = {
+      price_asc:  "price_asc",
+      price_desc: "price_desc",
+      name_asc:   "p.name ASC",
+      name_desc:  "p.name DESC",
+    };
+
+    // Para price_asc / price_desc necesitamos un subquery al precio_1
+    let orderClause;
+    if (sort === "price_asc" || sort === "price_desc") {
+      const dir = sort === "price_asc" ? "ASC" : "DESC";
+      orderClause = `(
+        SELECT pp.price FROM product_prices pp
+        WHERE pp.product_id = p.id AND pp.price_type = 'precio_1'
+        LIMIT 1
+      ) ${dir} NULLS LAST`;
+    } else {
+      orderClause = ORDER_MAP[sort] ?? "p.created_at DESC";
+    }
 
     const res = await pool.query(`
       SELECT
@@ -71,7 +91,7 @@ export default class ProductRepository {
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       ${whereClause}
-      ORDER BY p.created_at DESC
+      ORDER BY ${orderClause}
       LIMIT $1 OFFSET $2
     `, params);
 
@@ -272,6 +292,13 @@ export default class ProductRepository {
     await pool.query(
       "DELETE FROM product_images WHERE product_id=$1",
       [productId]
+    );
+  }
+
+  async deleteImageByKey(key) {
+    await pool.query(
+      "DELETE FROM product_images WHERE key=$1",
+      [key]
     );
   }
 

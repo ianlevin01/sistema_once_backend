@@ -107,9 +107,9 @@ export default class ProductService {
     return this.repo.createCategory(name, parentId);
   }
 
-  async getPaginated(limit = 30, offset = 0, categoryId = null) {
+  async getPaginated(limit = 30, offset = 0, categoryId = null, sort = "default") {
     const [products, config] = await Promise.all([
-      this.repo.getPaginated(limit, offset, categoryId),
+      this.repo.getPaginated(limit, offset, categoryId, sort),
       getPriceConfig(),
     ]);
 
@@ -188,9 +188,19 @@ export default class ProductService {
     await this.repo.update(id, p);
     await this.saveCostAndPrices(id, p);
 
-    const keepKeys = p.keepImages
-      ? (Array.isArray(p.keepImages) ? p.keepImages : [p.keepImages])
-      : null;
+    // keepImages puede ser:
+    //   undefined  → el cliente no mandó el campo (no tocar imágenes, comportamiento legacy)
+    //   string     → una sola key a conservar
+    //   string[]   → varias keys a conservar
+    //   ""         → se mandó el campo pero vacío → borrar todas
+    const keepKeys =
+      p.keepImages === undefined
+        ? null                                              // no vino el campo → no tocar
+        : Array.isArray(p.keepImages)
+          ? p.keepImages.filter(Boolean)                   // array → filtrar vacíos
+          : p.keepImages
+            ? [p.keepImages]                               // string con valor → envolver
+            : [];                                          // string vacío → borrar todas
 
     const current       = await this.repo.getById(id);
     const currentImages = current.images || [];

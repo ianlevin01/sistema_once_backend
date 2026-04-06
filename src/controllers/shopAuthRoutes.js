@@ -2,7 +2,10 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import pool from "../database/db.js"; // mismo path que el resto del proyecto
+import pool from "../database/db.js";
+import S3Service from "../services/s3Service.js"; // ajustá el path si es diferente
+
+const s3 = new S3Service(); // mismo path que el resto del proyecto
 
 const router = Router();
 const JWT_SECRET  = process.env.JWT_SECRET ?? "oncepuntos_secret_dev";
@@ -195,16 +198,47 @@ router.get("/orders", requireAuth, async (req, res) => {
 
     const result = await pool.query(
       `SELECT
-         w.id, w.total, w.color AS status, w.created_at,
+         w.id, w.total, w.created_at,
+         CASE WHEN EXISTS(SELECT 1 FROM public.orders o WHERE o.id = w.order_id AND o.tipo IN ('Presupuesto','Presupuesto Web')) THEN 'completed' ELSE 'pending' END AS status,
          w.observaciones,
-         COALESCE(w.items, '[]'::json) AS items
+         COALESCE(
+           (
+             SELECT json_agg(
+               json_build_object(
+                 'product_id', wi.product_id,
+                 'name',       wi.name,
+                 'quantity',   wi.quantity,
+                 'unit_price', wi.unit_price,
+                 'image',      (SELECT pi.key FROM product_images pi WHERE pi.product_id = wi.product_id LIMIT 1)
+               )
+             )
+             FROM public.web_order_items wi
+             WHERE wi.web_order_id = w.id
+           ), '[]'::json
+         ) AS items
        FROM public.web_orders w
        LEFT JOIN public.customers c ON c.id = w.customer_id
        WHERE ${whereClause}
        ORDER BY w.created_at DESC`,
       [param]
     );
-    return res.json(result.rows);
+    // Generar URLs firmadas para las imágenes de cada ítem
+    const orders = await Promise.all(
+      result.rows.map(async (order) => {
+        const items = await Promise.all(
+          (order.items ?? []).map(async (item) => {
+            let imageUrl = null;
+            if (item.image) {
+              try { imageUrl = await s3.getSignedUrl(item.image); } catch {}
+            }
+            return { ...item, image: imageUrl };
+          })
+        );
+        return { ...order, items };
+      })
+    );
+
+    return res.json(orders);
   } catch (err) {
     console.error("orders error:", err);
     return res.status(500).json({ message: "Error interno" });
