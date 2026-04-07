@@ -6,23 +6,24 @@ export default class OrderRepository {
     const res = await client.query(
       `INSERT INTO orders
         (customer_id, user_id, total, profit, status,
-         tipo, vendedor, price_type, texto_libre, escenario,
-         origen, destino)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         tipo, vendedor, price_type, texto_libre,
+         origen, destino, supplier_id, warehouse_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING *`,
       [
-        data.customer_id,
-        data.user_id,
+        data.customer_id  || null,
+        data.user_id      || null,
         data.total,
         data.profit,
         data.status,
-        data.tipo        || null,
-        data.vendedor    || null,
-        data.price_type  || null,
-        data.texto_libre || null,
-        data.escenario   || null,
-        data.origen      || null,
-        data.destino     || null,
+        data.tipo         || null,
+        data.vendedor     || null,
+        data.price_type   || null,
+        data.texto_libre  || null,
+        data.origen       || null,
+        data.destino      || null,
+        data.supplier_id  || null,
+        data.warehouse_id || null,
       ]
     );
     return res.rows[0];
@@ -32,7 +33,9 @@ export default class OrderRepository {
     const res = await pool.query(`
       SELECT
         o.*,
-        c.name AS customer_name,
+        c.name  AS customer_name,
+        pr.name AS supplier_name,
+        w.name  AS warehouse_name,
 
         COALESCE(
           (
@@ -70,7 +73,9 @@ export default class OrderRepository {
         ) AS payments
 
       FROM orders o
-      LEFT JOIN customers c ON c.id = o.customer_id
+      LEFT JOIN customers  c  ON c.id  = o.customer_id
+      LEFT JOIN proveedores pr ON pr.id = o.supplier_id
+      LEFT JOIN warehouses  w  ON w.id  = o.warehouse_id
       WHERE o.id = $1
     `, [id]);
 
@@ -81,11 +86,13 @@ export default class OrderRepository {
     let query = `
       SELECT
         o.*,
-        c.name AS customer_name,
+        c.name  AS customer_name,
+        pr.name AS supplier_name,
         p.method AS payment_method
       FROM orders o
-      LEFT JOIN customers c ON c.id = o.customer_id
-      LEFT JOIN payments  p ON p.order_id = o.id
+      LEFT JOIN customers  c  ON c.id  = o.customer_id
+      LEFT JOIN proveedores pr ON pr.id = o.supplier_id
+      LEFT JOIN payments    p  ON p.order_id = o.id
       WHERE 1=1
     `;
     const params = [];
@@ -126,5 +133,25 @@ export default class OrderRepository {
     query += ` ORDER BY o.created_at DESC`;
     const res = await pool.query(query, params);
     return res.rows;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Último precio al que se le vendió un producto a un cliente
+  // Devuelve { unit_price, created_at } o null
+  // ─────────────────────────────────────────────────────────────────────────
+  async getLastSalePrice(customerId, productId) {
+    const res = await pool.query(
+      `SELECT oi.unit_price, o.created_at
+       FROM order_items oi
+       JOIN orders o ON o.id = oi.order_id
+       WHERE o.customer_id = $1
+         AND oi.product_id = $2
+         AND o.tipo IN ('Presupuesto', 'Presupuesto Web')
+         AND o.status = 'completed'
+       ORDER BY o.created_at DESC
+       LIMIT 1`,
+      [customerId, productId]
+    );
+    return res.rows[0] || null;
   }
 }

@@ -1,14 +1,23 @@
 import { Router } from "express";
+import pool from "../database/db.js";
 import ComprobanteService from "../services/comprobanteService.js";
 
 const router = Router();
-const svc = new ComprobanteService();
+const svc    = new ComprobanteService();
 
 // ── Crear comprobante ─────────────────────────────────────────
 router.post("/", async (req, res) => {
-  const { customer_id, payment_method, items } = req.body;
+  const { items } = req.body;
 
-  if (!customer_id || !payment_method || !items?.length) {
+  // Reposicion requiere supplier_id; el resto requiere customer_id
+  const esReposicion = req.body.tipo === "Reposicion";
+  if (!esReposicion && !req.body.customer_id) {
+    return res.status(400).json({ message: "Datos incompletos: falta customer_id" });
+  }
+  if (esReposicion && !req.body.supplier_id) {
+    return res.status(400).json({ message: "Datos incompletos: falta supplier_id para Reposicion" });
+  }
+  if (!req.body.payment_method || !items?.length) {
     return res.status(400).json({ message: "Datos incompletos" });
   }
 
@@ -22,7 +31,6 @@ router.post("/", async (req, res) => {
 });
 
 // ── Listado agrupado para CajaListado ─────────────────────────
-// IMPORTANTE: este endpoint va ANTES de /:id
 router.get("/listado", async (req, res) => {
   const { from, to } = req.query;
   try {
@@ -30,6 +38,32 @@ router.get("/listado", async (req, res) => {
     return res.status(200).json(result);
   } catch (err) {
     console.error("Error en /comprobantes/listado:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// ── Último precio de un producto para un cliente ──────────────
+// GET /comprobantes/last-price?customer_id=...&product_id=...
+router.get("/last-price", async (req, res) => {
+  const { customer_id, product_id } = req.query;
+  if (!customer_id || !product_id) {
+    return res.status(400).json({ message: "customer_id y product_id son requeridos" });
+  }
+  try {
+    const result = await svc.getLastSalePrice(customer_id, product_id);
+    return res.status(200).json(result || null);
+  } catch (err) {
+    console.error("Error GET /comprobantes/last-price:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// ── Listado de warehouses (para selector en Reposicion) ───────
+router.get("/warehouses", async (_req, res) => {
+  try {
+    const result = await pool.query(`SELECT id, name FROM warehouses ORDER BY name`);
+    return res.status(200).json(result.rows);
+  } catch (err) {
     return res.status(500).json({ message: "Error interno" });
   }
 });
@@ -49,7 +83,6 @@ router.get("/", async (req, res) => {
 });
 
 // ── Eliminar ──────────────────────────────────────────────────
-// Ahora llama al service que maneja stock_reserva correctamente
 router.delete("/:id", async (req, res) => {
   try {
     await svc.delete(req.params.id);
