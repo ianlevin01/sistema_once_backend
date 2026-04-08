@@ -3,6 +3,7 @@ import OrderRepository from "../repositories/orderRepository.js";
 import OrderItemRepository from "../repositories/orderItemRepository.js";
 import PaymentRepository from "../repositories/paymentRepository.js";
 import CuentaCorrienteRepository from "../repositories/cuentaCorrienteRepository.js";
+import ProveedorRepository from "../repositories/proveedorRepository.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WAREHOUSE HARDCODEADO
@@ -16,10 +17,11 @@ const DEFAULT_WAREHOUSE_ID = process.env.DEFAULT_WAREHOUSE_ID || null;
 // Cuando haya JWT: const DEFAULT_WAREHOUSE_ID = req.user.warehouse_id;
 
 export default class ComprobanteService {
-  orderRepo   = new OrderRepository();
-  itemRepo    = new OrderItemRepository();
-  paymentRepo = new PaymentRepository();
-  ccRepo      = new CuentaCorrienteRepository();
+  orderRepo    = new OrderRepository();
+  itemRepo     = new OrderItemRepository();
+  paymentRepo  = new PaymentRepository();
+  ccRepo       = new CuentaCorrienteRepository();
+  proveedorRepo = new ProveedorRepository();
 
   // ─────────────────────────────────────────────────────────────────────────
   // CREATE
@@ -214,6 +216,15 @@ export default class ComprobanteService {
             [item.product_id, warehouseId, item.quantity]
           );
         }
+      }
+
+      // Acreditar saldo a favor al proveedor (dentro de la misma transaccion)
+      if (esReposicion && data.supplier_id && total > 0) {
+        await this.proveedorRepo.acreditarReposicion(
+          data.supplier_id,
+          { monto: total, orderId: order.id },
+          client
+        );
       }
 
       await client.query("COMMIT");

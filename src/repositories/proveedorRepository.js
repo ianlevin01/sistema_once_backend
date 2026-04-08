@@ -113,4 +113,98 @@ export default class ProveedorRepository {
     );
     return res.rows;
   }
+
+  // ── Acreditar saldo a favor cuando se genera una Reposicion ──
+  // (llamado desde comprobanteService dentro de una transacción)
+  async acreditarReposicion(proveedorId, { monto, orderId }, client) {
+    const db = client || pool;
+    const cc = await this.getOrCreateCC(proveedorId, db);
+
+    // Suma saldo a favor (saldo negativo = proveedor nos debe; saldo positivo = le debemos)
+    await db.query(
+      `UPDATE cuentas_corrientes_prov
+       SET saldo = saldo + $1, updated_at = now()
+       WHERE id = $2`,
+      [monto, cc.id]
+    );
+
+    await db.query(
+      `INSERT INTO cc_movimientos_prov
+         (cuenta_corriente_id, tipo, concepto, monto, order_id)
+       VALUES ($1, 'credito', $2, $3, $4)`,
+      [cc.id, `Reposición — ${orderId.slice(0, 8)}`, monto, orderId]
+    );
+
+    return cc;
+  }
+
+  // ── Registrar pago al proveedor (le pagamos lo que le debemos) ──
+  // Reduce el saldo a favor del proveedor
+  async registrarPago(proveedorId, { monto, concepto }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const cc = await this.getOrCreateCC(proveedorId, client);
+
+      if (cc.saldo < monto) {
+        throw new Error("El monto supera el saldo a favor del proveedor");
+      }
+
+      await client.query(
+        `UPDATE cuentas_corrientes_prov
+         SET saldo = saldo - $1, updated_at = now()
+         WHERE id = $2`,
+        [monto, cc.id]
+      );
+
+      await client.query(
+        `INSERT INTO cc_movimientos_prov
+           (cuenta_corriente_id, tipo, concepto, monto)
+         VALUES ($1, 'debito', $2, $3)`,
+        [cc.id, concepto || "Pago a proveedor", monto]
+      );
+
+      await client.query("COMMIT");
+      return { ok: true };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  // ── Registrar cobranza del proveedor (nos devuelve dinero) ──
+  // Reduce el saldo a favor del proveedor (igual que pago, semántica diferente)
+  async registrarCobranza(proveedorId, { monto, concepto, metodo_pago }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const cc = await this.getOrCreateCC(proveedorId, client);
+
+      await client.query(
+        `UPDATE cuentas_corrientes_prov
+         SET saldo = saldo - $1, updated_at = now()
+         WHERE id = $2`,
+        [monto, cc.id]
+      );
+
+      await client.query(
+        `INSERT INTO cc_movimientos_prov
+           (cuenta_corriente_id, tipo, concepto, monto, metodo_pago)
+         VALUES ($1, 'debito', $2, $3, $4)`,
+        [cc.id, concepto || "Cobranza proveedor", monto, metodo_pago || null]
+      );
+
+      await client.query("COMMIT");
+      return { ok: true };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 }

@@ -15,6 +15,7 @@ import warehouses from "./controllers/warehousesRoutes.js";
 import shopAuthRouter from "./controllers/shopAuthRoutes.js";
 import authRoutes from "./controllers/authRoutes.js";
 import userRoutes from "./controllers/userRoutes.js";
+import proveedorRoutes from "./controllers/proveedorRoutes.js";
 
 
 dotenv.config();
@@ -52,6 +53,7 @@ app.use("/api/warehouses", warehouses);
 app.use("/api/shop", shopAuthRouter);
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/proveedores", proveedorRoutes);
 
 // Server
 app.listen(PORT, "0.0.0.0", () => {

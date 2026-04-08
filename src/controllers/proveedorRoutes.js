@@ -4,7 +4,7 @@ import ProveedorRepository from "../repositories/proveedorRepository.js";
 const router = Router();
 const repo   = new ProveedorRepository();
 
-// Búsqueda rápida (para el selector en comprobantes)
+// Búsqueda rápida
 router.get("/search", async (req, res) => {
   const { q } = req.query;
   if (!q?.trim()) return res.status(200).json([]);
@@ -79,6 +79,45 @@ router.get("/:id/cuenta-corriente", async (req, res) => {
     const movs = await repo.getMovimientos(req.params.id);
     return res.status(200).json({ cuenta: cc, movimientos: movs });
   } catch (err) {
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// ── Registrar pago al proveedor ───────────────────────────────
+// Reduce el saldo a favor (le pagamos lo que le debemos)
+router.post("/:id/pago", async (req, res) => {
+  const { monto, concepto } = req.body;
+  if (!monto || Number(monto) <= 0) {
+    return res.status(400).json({ message: "Monto inválido" });
+  }
+  try {
+    const result = await repo.registrarPago(req.params.id, {
+      monto:    Number(monto),
+      concepto: concepto || "Pago a proveedor",
+    });
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("POST /proveedores/:id/pago:", err);
+    return res.status(400).json({ message: err.message || "Error interno" });
+  }
+});
+
+// ── Registrar cobranza del proveedor ─────────────────────────
+// También reduce el saldo a favor (nos devuelve dinero / nota de crédito)
+router.post("/:id/cobranza", async (req, res) => {
+  const { monto, concepto, metodo_pago } = req.body;
+  if (!monto || Number(monto) <= 0) {
+    return res.status(400).json({ message: "Monto inválido" });
+  }
+  try {
+    const result = await repo.registrarCobranza(req.params.id, {
+      monto:      Number(monto),
+      concepto:   concepto || "Cobranza proveedor",
+      metodo_pago,
+    });
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("POST /proveedores/:id/cobranza:", err);
     return res.status(500).json({ message: "Error interno" });
   }
 });
