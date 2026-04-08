@@ -5,33 +5,13 @@ import PaymentRepository from "../repositories/paymentRepository.js";
 import CuentaCorrienteRepository from "../repositories/cuentaCorrienteRepository.js";
 import ProveedorRepository from "../repositories/proveedorRepository.js";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// WAREHOUSE HARDCODEADO
-// Cuando implementes JWT, reemplazá este valor por req.user.warehouse_id
-// que debería venir del token del usuario autenticado.
-// ─────────────────────────────────────────────────────────────────────────────
-// Para obtener el ID del warehouse por defecto, ejecutá:
-//   SELECT id, name FROM warehouses LIMIT 5;
-// y pegá el UUID correspondiente acá:
-const DEFAULT_WAREHOUSE_ID = process.env.DEFAULT_WAREHOUSE_ID || null;
-// Cuando haya JWT: const DEFAULT_WAREHOUSE_ID = req.user.warehouse_id;
-
 export default class ComprobanteService {
-  orderRepo    = new OrderRepository();
-  itemRepo     = new OrderItemRepository();
-  paymentRepo  = new PaymentRepository();
-  ccRepo       = new CuentaCorrienteRepository();
+  orderRepo     = new OrderRepository();
+  itemRepo      = new OrderItemRepository();
+  paymentRepo   = new PaymentRepository();
+  ccRepo        = new CuentaCorrienteRepository();
   proveedorRepo = new ProveedorRepository();
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // CREATE
-  // data.warehouse_id:
-  //   - Para Presupuesto/Nota de Pedido/etc.: se ignora el que venga del body
-  //     y se usa DEFAULT_WAREHOUSE_ID (del usuario hardcodeado por ahora).
-  //   - Para Reposicion: se usa el que venga explícitamente en data.warehouse_id.
-  //
-  // data.supplier_id: UUID del proveedor (solo para Reposicion)
-  // ─────────────────────────────────────────────────────────────────────────
   async create(data) {
     const client = await pool.connect();
     try {
@@ -62,11 +42,19 @@ export default class ComprobanteService {
 
       // ── Determinar warehouse_id ──────────────────────────────────────────
       // Reposicion: el usuario elige manualmente la warehouse (viene en data.warehouse_id)
-      // Todo lo demás: se usa el warehouse del usuario (hardcodeado por ahora)
+      // Todo lo demás: se obtiene el warehouse configurado en el usuario (users.warehouse_id)
       const esReposicion = tipoFinal === "Reposicion";
-      const warehouseId  = esReposicion
-        ? (data.warehouse_id || null)
-        : DEFAULT_WAREHOUSE_ID;
+      let warehouseId = null;
+
+      if (esReposicion) {
+        warehouseId = data.warehouse_id || null;
+      } else if (data.user_id) {
+        const userRes = await client.query(
+          `SELECT warehouse_id FROM users WHERE id = $1`,
+          [data.user_id]
+        );
+        warehouseId = userRes.rows[0]?.warehouse_id || null;
+      }
 
       // ── Crear la orden principal ─────────────────────────────────────────
       const order = await this.orderRepo.create({
@@ -122,7 +110,7 @@ export default class ComprobanteService {
         for (const item of data.items) {
           if (!item.product_id) continue;
 
-          // Descontar stock_reserva
+          // Descontar stock_reserva (se mantiene en >= 0)
           await client.query(
             `UPDATE products
              SET stock_reserva = GREATEST(0, stock_reserva - $1)
@@ -130,14 +118,8 @@ export default class ComprobanteService {
             [item.quantity, item.product_id]
           );
 
-          // Descontar stock real
-          // Si hay warehouse_id definido (del usuario), descuenta de ahí primero;
-          // si no, descuenta del que tenga más stock (comportamiento original)
-          if (warehouseId) {
-            await this._deductStockFromWarehouse(client, item.product_id, item.quantity, warehouseId);
-          } else {
-            await this._deductStockMaxFirst(client, item.product_id, item.quantity);
-          }
+          // Descontar stock real (puede quedar negativo)
+          await this._deductStock(client, item.product_id, item.quantity, warehouseId);
         }
 
         // Nota paralela con items eliminados
@@ -179,11 +161,7 @@ export default class ComprobanteService {
       if (esPresupuesto && !data.source_nota_id) {
         for (const item of data.items) {
           if (!item.product_id) continue;
-          if (warehouseId) {
-            await this._deductStockFromWarehouse(client, item.product_id, item.quantity, warehouseId);
-          } else {
-            await this._deductStockMaxFirst(client, item.product_id, item.quantity);
-          }
+          await this._deductStock(client, item.product_id, item.quantity, warehouseId);
         }
       }
 
@@ -206,8 +184,6 @@ export default class ComprobanteService {
       if (esReposicion && warehouseId) {
         for (const item of data.items) {
           if (!item.product_id) continue;
-          // Upsert: si ya existe la fila stock(product_id, warehouse_id) la suma,
-          // si no la crea
           await client.query(
             `INSERT INTO stock (product_id, warehouse_id, quantity)
              VALUES ($1, $2, $3)
@@ -218,7 +194,7 @@ export default class ComprobanteService {
         }
       }
 
-      // Acreditar saldo a favor al proveedor (dentro de la misma transaccion)
+      // Acreditar saldo a favor al proveedor
       if (esReposicion && data.supplier_id && total > 0) {
         await this.proveedorRepo.acreditarReposicion(
           data.supplier_id,
@@ -238,63 +214,60 @@ export default class ComprobanteService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Descontar stock de un warehouse específico primero; si no alcanza,
-  // desborda al que tenga más stock
+  // Descuenta stock de un producto. El stock PUEDE quedar negativo.
+  //
+  // Con warehouseId:
+  //   - Si existe la fila: descuenta directo (puede quedar negativo)
+  //   - Si no existe la fila: la crea con valor negativo
+  //
+  // Sin warehouseId:
+  //   - Descuenta del warehouse con más stock primero
+  //   - Si agota todos y queda remaining, lo aplica negativo en el de mayor stock
+  //   - Si no hay ninguna fila de stock, no hace nada
   // ─────────────────────────────────────────────────────────────────────────
-  async _deductStockFromWarehouse(client, productId, quantity, warehouseId) {
-    // Intentar descontar del warehouse preferido primero
-    const preferred = await client.query(
-      `SELECT id, quantity FROM stock
-       WHERE product_id = $1 AND warehouse_id = $2`,
-      [productId, warehouseId]
-    );
+  async _deductStock(client, productId, quantity, warehouseId) {
+    if (warehouseId) {
+      // INSERT ... ON CONFLICT: si existe resta, si no existe crea con negativo
+      await client.query(
+        `INSERT INTO stock (product_id, warehouse_id, quantity)
+         VALUES ($1, $2, $3 * -1)
+         ON CONFLICT (product_id, warehouse_id)
+         DO UPDATE SET quantity = stock.quantity - $3`,
+        [productId, warehouseId, quantity]
+      );
+    } else {
+      // Sin warehouse: descontar del que tenga más stock
+      const { rows } = await client.query(
+        `SELECT id, quantity FROM stock
+         WHERE product_id = $1
+         ORDER BY quantity DESC`,
+        [productId]
+      );
 
-    let remaining = quantity;
+      if (rows.length === 0) return;
 
-    if (preferred.rows[0]) {
-      const deduct = Math.min(remaining, preferred.rows[0].quantity);
-      if (deduct > 0) {
+      let remaining = quantity;
+
+      for (const row of rows) {
+        if (remaining <= 0) break;
+        const available = Math.max(0, row.quantity);
+        const deduct    = Math.min(remaining, available);
+        if (deduct > 0) {
+          await client.query(
+            `UPDATE stock SET quantity = quantity - $1 WHERE id = $2`,
+            [deduct, row.id]
+          );
+          remaining -= deduct;
+        }
+      }
+
+      // Si todavía queda, aplicarlo negativo en el warehouse con más stock
+      if (remaining > 0) {
         await client.query(
           `UPDATE stock SET quantity = quantity - $1 WHERE id = $2`,
-          [deduct, preferred.rows[0].id]
+          [remaining, rows[0].id]
         );
-        remaining -= deduct;
       }
-    }
-
-    // Si sobra, descontar del que tenga más stock (excluyendo el ya usado)
-    if (remaining > 0) {
-      await this._deductStockMaxFirst(client, productId, remaining, warehouseId);
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Descontar del warehouse con más stock primero (comportamiento original)
-  // excludeWarehouseId: opcional, excluye ese warehouse del reparto
-  // ─────────────────────────────────────────────────────────────────────────
-  async _deductStockMaxFirst(client, productId, quantity, excludeWarehouseId = null) {
-    let query = `
-      SELECT s.id, s.quantity
-      FROM stock s
-      WHERE s.product_id = $1
-    `;
-    const params = [productId];
-    if (excludeWarehouseId) {
-      params.push(excludeWarehouseId);
-      query += ` AND s.warehouse_id != $${params.length}`;
-    }
-    query += ` ORDER BY s.quantity DESC`;
-
-    const stockRows = await client.query(query, params);
-    let remaining = quantity;
-    for (const row of stockRows.rows) {
-      if (remaining <= 0) break;
-      const deduct = Math.min(remaining, row.quantity);
-      await client.query(
-        `UPDATE stock SET quantity = quantity - $1 WHERE id = $2`,
-        [deduct, row.id]
-      );
-      remaining -= deduct;
     }
   }
 

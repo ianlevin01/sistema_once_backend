@@ -131,7 +131,7 @@ export default class ProveedorRepository {
     await db.query(
       `INSERT INTO cc_movimientos_prov
          (cuenta_corriente_id, tipo, concepto, monto, order_id)
-       VALUES ($1, 'credito', $2, $3, $4)`,
+       VALUES ($1, 'pago', $2, $3, $4)`,
       [cc.id, `Reposición — ${orderId.slice(0, 8)}`, monto, orderId]
     );
 
