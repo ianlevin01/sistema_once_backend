@@ -35,27 +35,29 @@ router.post("/login", async (req, res) => {
     }
 
     const token = jwt.sign(
-      {
-        id:           matchedUser.id,
-        name:         matchedUser.name,
-        role:         matchedUser.role,
-        warehouse_id: matchedUser.warehouse_id,
-        warehouse_name: matchedUser.warehouse_name,
-      },
-      JWT_SECRET,
-      { expiresIn: "12h" }
-    );
+  {
+    id:             matchedUser.id,
+    name:           matchedUser.name,
+    role:           matchedUser.role,
+    warehouse_id:   matchedUser.warehouse_id,
+    warehouse_name: matchedUser.warehouse_name,
+    pct_vendedor:   matchedUser.pct_vendedor ?? 0, // ← nuevo
+  },
+  JWT_SECRET,
+  { expiresIn: "12h" }
+);
 
-    return res.status(200).json({
-      token,
-      user: {
-        id:             matchedUser.id,
-        name:           matchedUser.name,
-        role:           matchedUser.role,
-        warehouse_id:   matchedUser.warehouse_id,
-        warehouse_name: matchedUser.warehouse_name,
-      },
-    });
+   return res.status(200).json({
+  token,
+  user: {
+    id:             matchedUser.id,
+    name:           matchedUser.name,
+    role:           matchedUser.role,
+    warehouse_id:   matchedUser.warehouse_id,
+    warehouse_name: matchedUser.warehouse_name,
+    pct_vendedor:   matchedUser.pct_vendedor ?? 0, // ← nuevo
+  },
+});
   } catch (err) {
     console.error("POST /auth/login:", err);
     return res.status(500).json({ message: "Error interno" });
@@ -73,5 +75,25 @@ export function requireAuth(req, res, next) {
     return res.status(401).json({ message: "Token inválido o expirado" });
   }
 }
+
+router.patch("/pct-vendedor", requireAuth, async (req, res) => {
+  const { pct_vendedor } = req.body;
+  if (pct_vendedor === undefined || isNaN(Number(pct_vendedor))) {
+    return res.status(400).json({ message: "Porcentaje inválido" });
+  }
+  if (req.user.role !== "vendedor") {
+    return res.status(403).json({ message: "Solo vendedores pueden hacer esto" });
+  }
+  try {
+    await pool.query(
+      "UPDATE users SET pct_vendedor = $1 WHERE id = $2",
+      [Number(pct_vendedor), req.user.id]
+    );
+    return res.status(200).json({ pct_vendedor: Number(pct_vendedor) });
+  } catch (err) {
+    console.error("PATCH /me/pct-vendedor:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
 
 export default router;
