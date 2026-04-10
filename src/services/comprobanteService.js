@@ -41,8 +41,6 @@ export default class ComprobanteService {
       }
 
       // ── Determinar warehouse_id ──────────────────────────────────────────
-      // Reposicion: el usuario elige manualmente la warehouse (viene en data.warehouse_id)
-      // Todo lo demás: se obtiene el warehouse configurado en el usuario (users.warehouse_id)
       const esReposicion = tipoFinal === "Reposicion";
       let warehouseId = null;
 
@@ -83,16 +81,18 @@ export default class ComprobanteService {
       }, order.id, client);
 
       // ── Cuenta corriente de cliente (solo Presupuesto + Cta Cte) ─────────
+      // Usa debitarPorComprobante que convierte según la divisa de la cuenta
       const esPresupuesto = tipoFinal === "Presupuesto" || tipoFinal === "Presupuesto Web";
       if (esPresupuesto && esCuentaCorriente && data.customer_id) {
-        const cuenta = await this.ccRepo.getOrCreate(data.customer_id, client);
-        await this.ccRepo.addMovimiento({
-          cuentaId: cuenta.id,
-          tipo:     "debito",
-          concepto: `${tipoFinal} — ${order.id.slice(0, 8)}`,
-          monto:    total,
-          orderId:  order.id,
-        }, client);
+        await this.ccRepo.debitarPorComprobante(
+          data.customer_id,
+          {
+            total,
+            orderId:  order.id,
+            concepto: `${tipoFinal} — ${order.id.slice(0, 8)}`,
+          },
+          client
+        );
       }
 
       // ── Vincular pedido web ───────────────────────────────────────────────
@@ -103,26 +103,19 @@ export default class ComprobanteService {
         );
       }
 
-      // ─────────────────────────────────────────────────────────────────────
-      // LÓGICA NOTA DE PEDIDO → PRESUPUESTO
-      // ─────────────────────────────────────────────────────────────────────
+      // ── Nota de Pedido → Presupuesto: descontar stock ────────────────────
       if (data.source_nota_id && esPresupuesto) {
         for (const item of data.items) {
           if (!item.product_id) continue;
-
-          // Descontar stock_reserva (se mantiene en >= 0)
           await client.query(
             `UPDATE products
              SET stock_reserva = GREATEST(0, stock_reserva - $1)
              WHERE id = $2`,
             [item.quantity, item.product_id]
           );
-
-          // Descontar stock real (puede quedar negativo)
           await this._deductStock(client, item.product_id, item.quantity, warehouseId);
         }
 
-        // Nota paralela con items eliminados
         if (data.removed_items && data.removed_items.length > 0) {
           const removedTotal = data.removed_items.reduce(
             (acc, i) => acc + (i.unit_price || 0) * i.quantity, 0
@@ -150,14 +143,11 @@ export default class ComprobanteService {
           }
         }
 
-        // Eliminar nota original
         await client.query(`DELETE FROM order_items WHERE order_id = $1`, [data.source_nota_id]);
         await client.query(`DELETE FROM orders WHERE id = $1`, [data.source_nota_id]);
       }
 
-      // ─────────────────────────────────────────────────────────────────────
-      // PRESUPUESTO NUEVO (sin source_nota_id) → descontar stock
-      // ─────────────────────────────────────────────────────────────────────
+      // ── Presupuesto nuevo → descontar stock ──────────────────────────────
       if (esPresupuesto && !data.source_nota_id) {
         for (const item of data.items) {
           if (!item.product_id) continue;
@@ -165,9 +155,7 @@ export default class ComprobanteService {
         }
       }
 
-      // ─────────────────────────────────────────────────────────────────────
-      // NOTA DE PEDIDO nueva → sumar stock_reserva
-      // ─────────────────────────────────────────────────────────────────────
+      // ── Nota de Pedido nueva → sumar stock_reserva ───────────────────────
       if ((tipoFinal === "Nota de Pedido" || tipoFinal === "Nota de Pedido Web") && !data.source_nota_id) {
         for (const item of data.items) {
           if (!item.product_id) continue;
@@ -178,9 +166,7 @@ export default class ComprobanteService {
         }
       }
 
-      // ─────────────────────────────────────────────────────────────────────
-      // REPOSICION → sumar stock al warehouse elegido
-      // ─────────────────────────────────────────────────────────────────────
+      // ── Reposición → sumar stock al warehouse ────────────────────────────
       if (esReposicion && warehouseId) {
         for (const item of data.items) {
           if (!item.product_id) continue;
@@ -194,7 +180,8 @@ export default class ComprobanteService {
         }
       }
 
-      // Acreditar saldo a favor al proveedor
+      // ── Acreditar saldo al proveedor por reposición ───────────────────────
+      // proveedorRepo.acreditarReposicion ya convierte según divisa del proveedor
       if (esReposicion && data.supplier_id && total > 0) {
         await this.proveedorRepo.acreditarReposicion(
           data.supplier_id,
@@ -213,21 +200,8 @@ export default class ComprobanteService {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Descuenta stock de un producto. El stock PUEDE quedar negativo.
-  //
-  // Con warehouseId:
-  //   - Si existe la fila: descuenta directo (puede quedar negativo)
-  //   - Si no existe la fila: la crea con valor negativo
-  //
-  // Sin warehouseId:
-  //   - Descuenta del warehouse con más stock primero
-  //   - Si agota todos y queda remaining, lo aplica negativo en el de mayor stock
-  //   - Si no hay ninguna fila de stock, no hace nada
-  // ─────────────────────────────────────────────────────────────────────────
   async _deductStock(client, productId, quantity, warehouseId) {
     if (warehouseId) {
-      // INSERT ... ON CONFLICT: si existe resta, si no existe crea con negativo
       await client.query(
         `INSERT INTO stock (product_id, warehouse_id, quantity)
          VALUES ($1, $2, $3 * -1)
@@ -236,18 +210,15 @@ export default class ComprobanteService {
         [productId, warehouseId, quantity]
       );
     } else {
-      // Sin warehouse: descontar del que tenga más stock
       const { rows } = await client.query(
         `SELECT id, quantity FROM stock
          WHERE product_id = $1
          ORDER BY quantity DESC`,
         [productId]
       );
-
       if (rows.length === 0) return;
 
       let remaining = quantity;
-
       for (const row of rows) {
         if (remaining <= 0) break;
         const available = Math.max(0, row.quantity);
@@ -260,8 +231,6 @@ export default class ComprobanteService {
           remaining -= deduct;
         }
       }
-
-      // Si todavía queda, aplicarlo negativo en el warehouse con más stock
       if (remaining > 0) {
         await client.query(
           `UPDATE stock SET quantity = quantity - $1 WHERE id = $2`,
@@ -274,9 +243,6 @@ export default class ComprobanteService {
   getById(id)     { return this.orderRepo.getById(id); }
   getAll(filters) { return this.orderRepo.getAll(filters); }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // GET LISTADO AGRUPADO para CajaListado
-  // ─────────────────────────────────────────────────────────────────────────
   async getListado({ from, to } = {}) {
     const client = await pool.connect();
     try {
@@ -321,8 +287,7 @@ export default class ComprobanteService {
       );
 
       const remitosRes = await client.query(`
-        SELECT
-          o.id, o.created_at, o.total, o.vendedor, o.origen, o.destino
+        SELECT o.id, o.created_at, o.total, o.vendedor, o.origen, o.destino
         FROM orders o
         WHERE o.tipo = 'Remito'
           AND o.created_at BETWEEN $1 AND $2
@@ -351,9 +316,6 @@ export default class ComprobanteService {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // DELETE
-  // ─────────────────────────────────────────────────────────────────────────
   async delete(id) {
     const client = await pool.connect();
     try {
@@ -387,9 +349,6 @@ export default class ComprobanteService {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // ÚLTIMO PRECIO de un producto para un cliente
-  // ─────────────────────────────────────────────────────────────────────────
   async getLastSalePrice(customerId, productId) {
     return this.orderRepo.getLastSalePrice(customerId, productId);
   }

@@ -20,7 +20,6 @@ router.get("/cliente/:customerId", async (req, res) => {
   try {
     const result = await svc.getByCustomer(req.params.customerId);
     if (!result) {
-      // Si no existe aún, crear y devolver vacía
       const nueva = await svc.getOrCreate(req.params.customerId);
       return res.status(200).json({ ...nueva, movimientos: [] });
     }
@@ -31,24 +30,32 @@ router.get("/cliente/:customerId", async (req, res) => {
   }
 });
 
-// POST registrar pago
+// POST registrar pago (legacy)
 router.post("/cliente/:customerId/pago", async (req, res) => {
   const { monto, concepto } = req.body;
-  if (!monto || Number(monto) <= 0) return res.status(400).json({ message: "Monto inválido" });
+  if (!monto || Number(monto) <= 0)
+    return res.status(400).json({ message: "Monto inválido" });
   try {
-    const result = await svc.registrarPago(req.params.customerId, { monto: Number(monto), concepto });
+    const result = await svc.registrarPago(req.params.customerId, {
+      monto: Number(monto),
+      concepto,
+    });
     return res.status(200).json(result);
   } catch (err) {
     return res.status(400).json({ message: err.message });
   }
 });
 
-// POST agregar saldo a favor (legacy, se mantiene por compatibilidad)
+// POST agregar saldo a favor (legacy)
 router.post("/cliente/:customerId/saldo", async (req, res) => {
   const { monto, concepto } = req.body;
-  if (!monto || Number(monto) <= 0) return res.status(400).json({ message: "Monto inválido" });
+  if (!monto || Number(monto) <= 0)
+    return res.status(400).json({ message: "Monto inválido" });
   try {
-    const result = await svc.agregarSaldo(req.params.customerId, { monto: Number(monto), concepto });
+    const result = await svc.agregarSaldo(req.params.customerId, {
+      monto: Number(monto),
+      concepto,
+    });
     return res.status(200).json(result);
   } catch (err) {
     console.error("Error en POST /cuenta-corriente/cliente/:id/saldo:", err);
@@ -56,16 +63,22 @@ router.post("/cliente/:customerId/saldo", async (req, res) => {
   }
 });
 
-// POST registrar cobranza (con método de pago, se guarda en CC y en cash_movements)
+// POST registrar cobranza
+// Body: { monto, concepto?, metodo_pago, divisa_cobro? }
+// divisa_cobro: 'ARS' | 'USD' — en qué moneda pagó el cliente físicamente
+//               Si se omite, se asume la divisa de la cuenta
 router.post("/cliente/:customerId/cobranza", async (req, res) => {
-  const { monto, concepto, metodo_pago } = req.body;
-  if (!monto || Number(monto) <= 0) return res.status(400).json({ message: "Monto inválido" });
-  if (!metodo_pago) return res.status(400).json({ message: "Método de pago obligatorio" });
+  const { monto, concepto, metodo_pago, divisa_cobro } = req.body;
+  if (!monto || Number(monto) <= 0)
+    return res.status(400).json({ message: "Monto inválido" });
+  if (!metodo_pago)
+    return res.status(400).json({ message: "Método de pago obligatorio" });
   try {
     const result = await svc.registrarCobranza(req.params.customerId, {
-      monto:      Number(monto),
-      concepto:   concepto || "Cobranza",
+      monto:       Number(monto),
+      concepto:    concepto || "Cobranza",
       metodo_pago,
+      divisa_cobro: divisa_cobro || null,
     });
     return res.status(200).json(result);
   } catch (err) {

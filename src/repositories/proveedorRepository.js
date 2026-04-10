@@ -1,10 +1,30 @@
 import pool from "../database/db.js";
 
+// ─────────────────────────────────────────────────────────────
+// Helper: obtiene cotización del dólar desde price_config
+// ─────────────────────────────────────────────────────────────
+async function getCotizacion(client) {
+  const db = client || pool;
+  const res = await db.query(
+    `SELECT cotizacion_dolar FROM price_config ORDER BY updated_at DESC LIMIT 1`
+  );
+  return Number(res.rows[0]?.cotizacion_dolar ?? 1000);
+}
+
+function convertir(monto, divisaOrigen, divisaDestino, cotizacion) {
+  if (divisaOrigen === divisaDestino) return monto;
+  if (divisaOrigen === "ARS" && divisaDestino === "USD") return monto / cotizacion;
+  if (divisaOrigen === "USD" && divisaDestino === "ARS") return monto * cotizacion;
+  return monto;
+}
+
+// ─────────────────────────────────────────────────────────────
+
 export default class ProveedorRepository {
   async search(query) {
     const res = await pool.query(
       `SELECT id, name, document, phone, email, domicilio, localidad,
-              condicion_iva, codigo, contacto
+              condicion_iva, codigo, contacto, divisa
        FROM proveedores
        WHERE name ILIKE $1 OR document ILIKE $1 OR codigo ILIKE $1
        ORDER BY name
@@ -15,17 +35,12 @@ export default class ProveedorRepository {
   }
 
   async getAll() {
-    const res = await pool.query(
-      `SELECT * FROM proveedores ORDER BY name`
-    );
+    const res = await pool.query(`SELECT * FROM proveedores ORDER BY name`);
     return res.rows;
   }
 
   async getById(id) {
-    const res = await pool.query(
-      `SELECT * FROM proveedores WHERE id = $1`,
-      [id]
-    );
+    const res = await pool.query(`SELECT * FROM proveedores WHERE id = $1`, [id]);
     return res.rows[0] || null;
   }
 
@@ -34,16 +49,21 @@ export default class ProveedorRepository {
       `INSERT INTO proveedores
         (name, type, document, phone, email, domicilio, localidad,
          provincia, codigo_postal, contacto, descuento, dias_plazo,
-         transporte, condicion_iva, vendedor, cuenta_pesos, cuenta_dolares, codigo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         transporte, condicion_iva, vendedor, cuenta_pesos, cuenta_dolares,
+         codigo, divisa)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        RETURNING *`,
       [
-        data.name, data.type || null, data.document || null,
-        data.phone || null, data.email || null, data.domicilio || null,
-        data.localidad || null, data.provincia || null, data.codigo_postal || null,
-        data.contacto || null, data.descuento || null, data.dias_plazo || null,
-        data.transporte || null, data.condicion_iva || null, data.vendedor || null,
-        data.cuenta_pesos || null, data.cuenta_dolares || null, data.codigo || null,
+        data.name,            data.type          || null,
+        data.document         || null,            data.phone         || null,
+        data.email            || null,            data.domicilio     || null,
+        data.localidad        || null,            data.provincia     || null,
+        data.codigo_postal    || null,            data.contacto      || null,
+        data.descuento        || null,            data.dias_plazo    || null,
+        data.transporte       || null,            data.condicion_iva || null,
+        data.vendedor         || null,            data.cuenta_pesos  || null,
+        data.cuenta_dolares   || null,            data.codigo        || null,
+        data.divisa           || "ARS",
       ]
     );
     return res.rows[0];
@@ -54,9 +74,10 @@ export default class ProveedorRepository {
     const values = [];
     let i = 1;
     const allowed = [
-      "name","type","document","phone","email","domicilio","localidad",
-      "provincia","codigo_postal","contacto","descuento","dias_plazo",
-      "transporte","condicion_iva","vendedor","cuenta_pesos","cuenta_dolares","codigo",
+      "name", "type", "document", "phone", "email", "domicilio", "localidad",
+      "provincia", "codigo_postal", "contacto", "descuento", "dias_plazo",
+      "transporte", "condicion_iva", "vendedor", "cuenta_pesos", "cuenta_dolares",
+      "codigo", "divisa",
     ];
     for (const key of allowed) {
       if (data[key] !== undefined) {
@@ -93,9 +114,17 @@ export default class ProveedorRepository {
       [proveedorId]
     );
     if (existing.rows[0]) return existing.rows[0];
+
+    // Obtener divisa del proveedor
+    const provRes = await db.query(
+      `SELECT divisa FROM proveedores WHERE id = $1`, [proveedorId]
+    );
+    const divisa = provRes.rows[0]?.divisa ?? "ARS";
+
     const created = await db.query(
-      `INSERT INTO cuentas_corrientes_prov (proveedor_id) VALUES ($1) RETURNING *`,
-      [proveedorId]
+      `INSERT INTO cuentas_corrientes_prov (proveedor_id, divisa)
+       VALUES ($1, $2) RETURNING *`,
+      [proveedorId, divisa]
     );
     return created.rows[0];
   }
@@ -114,40 +143,60 @@ export default class ProveedorRepository {
     return res.rows;
   }
 
-  // ── Acreditar saldo a favor cuando se genera una Reposicion ──
-  // (llamado desde comprobanteService dentro de una transacción)
+  // ── Acreditar saldo al proveedor por reposición ───────────────
+  // total viene en ARS desde comprobanteService; se convierte a la divisa del proveedor
   async acreditarReposicion(proveedorId, { monto, orderId }, client) {
     const db = client || pool;
-    const cc = await this.getOrCreateCC(proveedorId, db);
 
-    // Suma saldo a favor (saldo negativo = proveedor nos debe; saldo positivo = le debemos)
+    const cotizacion = await getCotizacion(db);
+    const cc         = await this.getOrCreateCC(proveedorId, db);
+    const divisa     = cc.divisa ?? "ARS";
+
+    // Convertir el monto (ARS) a la divisa de la cuenta del proveedor
+    const montoEnCuenta = convertir(monto, "ARS", divisa, cotizacion);
+
     await db.query(
       `UPDATE cuentas_corrientes_prov
        SET saldo = saldo + $1, updated_at = now()
        WHERE id = $2`,
-      [monto, cc.id]
+      [montoEnCuenta, cc.id]
     );
 
     await db.query(
       `INSERT INTO cc_movimientos_prov
-         (cuenta_corriente_id, tipo, concepto, monto, order_id)
-       VALUES ($1, 'pago', $2, $3, $4)`,
-      [cc.id, `Reposición — ${orderId.slice(0, 8)}`, monto, orderId]
+         (cuenta_corriente_id, tipo, concepto, monto, order_id,
+          divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
+       VALUES ($1, 'pago', $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        cc.id,
+        `Reposición — ${orderId.slice(0, 8)}`,
+        montoEnCuenta,
+        orderId,
+        divisa,
+        "ARS",
+        monto,
+        divisa === "USD" ? cotizacion : null,
+      ]
     );
 
     return cc;
   }
 
-  // ── Registrar pago al proveedor (le pagamos lo que le debemos) ──
-  // Reduce el saldo a favor del proveedor
-  async registrarPago(proveedorId, { monto, concepto }) {
+  // ── Registrar pago al proveedor (le pagamos lo que le debemos) ─
+  async registrarPago(proveedorId, { monto, concepto, metodo_pago, divisa_cobro }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      const cc = await this.getOrCreateCC(proveedorId, client);
+      const cotizacion  = await getCotizacion(client);
+      const cc          = await this.getOrCreateCC(proveedorId, client);
+      const divisa      = cc.divisa ?? "ARS";
+      const divisaCobro = divisa_cobro ?? divisa;
 
-      if (cc.saldo < monto) {
+      // Convertir lo que se paga a la divisa de la cuenta
+      const montoEnCuenta = convertir(monto, divisaCobro, divisa, cotizacion);
+
+      if (cc.saldo < montoEnCuenta) {
         throw new Error("El monto supera el saldo a favor del proveedor");
       }
 
@@ -155,14 +204,32 @@ export default class ProveedorRepository {
         `UPDATE cuentas_corrientes_prov
          SET saldo = saldo - $1, updated_at = now()
          WHERE id = $2`,
-        [monto, cc.id]
+        [montoEnCuenta, cc.id]
       );
 
       await client.query(
         `INSERT INTO cc_movimientos_prov
-           (cuenta_corriente_id, tipo, concepto, monto)
-         VALUES ($1, 'debito', $2, $3)`,
-        [cc.id, concepto || "Pago a proveedor", monto]
+           (cuenta_corriente_id, tipo, concepto, monto, metodo_pago,
+            divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
+         VALUES ($1,'debito',$2,$3,$4,$5,$6,$7,$8)`,
+        [
+          cc.id,
+          concepto || "Pago a proveedor",
+          montoEnCuenta,
+          metodo_pago || null,
+          divisa,
+          divisaCobro,
+          monto,
+          divisaCobro !== divisa ? cotizacion : null,
+        ]
+      );
+
+      // Registrar en cash_movements (siempre en ARS)
+      const montoARS = convertir(monto, divisaCobro, "ARS", cotizacion);
+      await client.query(
+        `INSERT INTO cash_movements (type, source, amount, reference_id)
+         VALUES ('egreso', $1, $2, $3)`,
+        [metodo_pago || "Efectivo", montoARS, cc.id]
       );
 
       await client.query("COMMIT");
@@ -175,27 +242,41 @@ export default class ProveedorRepository {
     }
   }
 
-  // ── Registrar cobranza del proveedor (nos devuelve dinero) ──
-  // Reduce el saldo a favor del proveedor (igual que pago, semántica diferente)
-  async registrarCobranza(proveedorId, { monto, concepto, metodo_pago }) {
+  // ── Registrar cobranza del proveedor (nos devuelve dinero) ─────
+  async registrarCobranza(proveedorId, { monto, concepto, metodo_pago, divisa_cobro }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      const cc = await this.getOrCreateCC(proveedorId, client);
+      const cotizacion  = await getCotizacion(client);
+      const cc          = await this.getOrCreateCC(proveedorId, client);
+      const divisa      = cc.divisa ?? "ARS";
+      const divisaCobro = divisa_cobro ?? divisa;
+
+      const montoEnCuenta = convertir(monto, divisaCobro, divisa, cotizacion);
 
       await client.query(
         `UPDATE cuentas_corrientes_prov
          SET saldo = saldo - $1, updated_at = now()
          WHERE id = $2`,
-        [monto, cc.id]
+        [montoEnCuenta, cc.id]
       );
 
       await client.query(
         `INSERT INTO cc_movimientos_prov
-           (cuenta_corriente_id, tipo, concepto, monto, metodo_pago)
-         VALUES ($1, 'debito', $2, $3, $4)`,
-        [cc.id, concepto || "Cobranza proveedor", monto, metodo_pago || null]
+           (cuenta_corriente_id, tipo, concepto, monto, metodo_pago,
+            divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
+         VALUES ($1,'debito',$2,$3,$4,$5,$6,$7,$8)`,
+        [
+          cc.id,
+          concepto || "Cobranza proveedor",
+          montoEnCuenta,
+          metodo_pago || null,
+          divisa,
+          divisaCobro,
+          monto,
+          divisaCobro !== divisa ? cotizacion : null,
+        ]
       );
 
       await client.query("COMMIT");
