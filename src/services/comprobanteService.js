@@ -243,78 +243,120 @@ export default class ComprobanteService {
   getById(id)     { return this.orderRepo.getById(id); }
   getAll(filters) { return this.orderRepo.getAll(filters); }
 
-  async getListado({ from, to } = {}) {
-    const client = await pool.connect();
-    try {
-      const dateFrom = from ? `${from} 00:00:00` : "1970-01-01";
-      const dateTo   = to   ? `${to} 23:59:59`   : "2099-12-31";
+async getListado({ from, to } = {}) {
+  const client = await pool.connect();
+  try {
+    const dateFrom = from ? `${from} 00:00:00` : "1970-01-01";
+    const dateTo   = to   ? `${to} 23:59:59`   : "2099-12-31";
 
-      const presRes = await client.query(`
-        SELECT
-          o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
-          COALESCE(c.name, pr.name) AS customer_name,
-          p.method AS payment_method
-        FROM orders o
-        LEFT JOIN customers  c  ON c.id  = o.customer_id
-        LEFT JOIN proveedores pr ON pr.id = o.supplier_id
-        LEFT JOIN payments   p  ON p.order_id = o.id
-        WHERE o.tipo IN ('Presupuesto', 'Presupuesto Web')
-          AND o.created_at BETWEEN $1 AND $2
-        ORDER BY o.created_at DESC
-      `, [dateFrom, dateTo]);
+    // ── Cotización dólar vigente ─────────────────────────────────
+    const cotizRes = await client.query(
+      `SELECT cotizacion_dolar FROM price_config ORDER BY updated_at DESC LIMIT 1`
+    );
+    const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1);
 
-      const notasRes = await client.query(`
-        SELECT
-          o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
-          o.customer_id, c.name AS customer_name
-        FROM orders o
-        LEFT JOIN customers c ON c.id = o.customer_id
-        WHERE o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
-          AND o.created_at BETWEEN $1 AND $2
-        ORDER BY o.created_at DESC
-      `, [dateFrom, dateTo]);
+    // ── Presupuestos ─────────────────────────────────────────────
+    const presRes = await client.query(`
+      SELECT
+        o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
+        COALESCE(c.name, pr.name) AS customer_name,
+        p.method AS payment_method
+      FROM orders o
+      LEFT JOIN customers   c  ON c.id  = o.customer_id
+      LEFT JOIN proveedores pr ON pr.id = o.supplier_id
+      LEFT JOIN payments    p  ON p.order_id = o.id
+      WHERE o.tipo IN ('Presupuesto', 'Presupuesto Web')
+        AND o.created_at BETWEEN $1 AND $2
+      ORDER BY o.created_at DESC
+    `, [dateFrom, dateTo]);
 
-      const notasConItems = await Promise.all(
-        notasRes.rows.map(async (nota) => {
-          const itemsRes = await client.query(`
-            SELECT oi.*, p.name, p.code
-            FROM order_items oi
-            LEFT JOIN products p ON p.id = oi.product_id
-            WHERE oi.order_id = $1
-          `, [nota.id]);
-          return { ...nota, items: itemsRes.rows };
-        })
-      );
+    // ── Reposiciones — total convertido a USD si corresponde ─────
+    const reposRes = await client.query(`
+      SELECT
+        o.id, o.tipo, o.created_at, o.vendedor, o.texto_libre,
+        o.supplier_id, o.warehouse_id,
+        pr.name  AS supplier_name,
+        w.name   AS warehouse_name,
+        COALESCE(pr.divisa, 'ARS') AS divisa,
+        CASE
+          WHEN COALESCE(pr.divisa, 'ARS') = 'USD'
+          THEN ROUND((o.total / $3)::numeric, 2)
+          ELSE o.total
+        END AS total
+      FROM orders o
+      LEFT JOIN proveedores pr ON pr.id = o.supplier_id
+      LEFT JOIN warehouses  w  ON w.id  = o.warehouse_id
+      WHERE o.tipo = 'Reposicion'
+        AND o.created_at BETWEEN $1 AND $2
+      ORDER BY o.created_at DESC
+    `, [dateFrom, dateTo, cotizacion]);
 
-      const remitosRes = await client.query(`
-        SELECT o.id, o.created_at, o.total, o.vendedor, o.origen, o.destino
-        FROM orders o
-        WHERE o.tipo = 'Remito'
-          AND o.created_at BETWEEN $1 AND $2
-        ORDER BY o.created_at DESC
-      `, [dateFrom, dateTo]);
+    const reposConItems = await Promise.all(
+      reposRes.rows.map(async (r) => {
+        const itemsRes = await client.query(`
+          SELECT oi.*, p.name, p.code
+          FROM order_items oi
+          LEFT JOIN products p ON p.id = oi.product_id
+          WHERE oi.order_id = $1
+        `, [r.id]);
+        return { ...r, items: itemsRes.rows };
+      })
+    );
 
-      const remitosConItems = await Promise.all(
-        remitosRes.rows.map(async (r) => {
-          const itemsRes = await client.query(`
-            SELECT oi.*, p.name, p.code
-            FROM order_items oi
-            LEFT JOIN products p ON p.id = oi.product_id
-            WHERE oi.order_id = $1
-          `, [r.id]);
-          return { ...r, items: itemsRes.rows };
-        })
-      );
+    // ── Notas de Pedido — SIN filtro de fecha, siempre todas ─────
+    const notasRes = await client.query(`
+      SELECT
+        o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
+        o.customer_id, c.name AS customer_name
+      FROM orders o
+      LEFT JOIN customers c ON c.id = o.customer_id
+      WHERE o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
+      ORDER BY o.created_at DESC
+    `);
 
-      return {
-        presupuestos: presRes.rows,
-        notasPedido:  notasConItems,
-        remitos:      remitosConItems,
-      };
-    } finally {
-      client.release();
-    }
+    const notasConItems = await Promise.all(
+      notasRes.rows.map(async (nota) => {
+        const itemsRes = await client.query(`
+          SELECT oi.*, p.name, p.code
+          FROM order_items oi
+          LEFT JOIN products p ON p.id = oi.product_id
+          WHERE oi.order_id = $1
+        `, [nota.id]);
+        return { ...nota, items: itemsRes.rows };
+      })
+    );
+
+    // ── Remitos ──────────────────────────────────────────────────
+    const remitosRes = await client.query(`
+      SELECT o.id, o.created_at, o.total, o.vendedor, o.origen, o.destino
+      FROM orders o
+      WHERE o.tipo = 'Remito'
+        AND o.created_at BETWEEN $1 AND $2
+      ORDER BY o.created_at DESC
+    `, [dateFrom, dateTo]);
+
+    const remitosConItems = await Promise.all(
+      remitosRes.rows.map(async (r) => {
+        const itemsRes = await client.query(`
+          SELECT oi.*, p.name, p.code
+          FROM order_items oi
+          LEFT JOIN products p ON p.id = oi.product_id
+          WHERE oi.order_id = $1
+        `, [r.id]);
+        return { ...r, items: itemsRes.rows };
+      })
+    );
+
+    return {
+      presupuestos: presRes.rows,
+      reposiciones: reposConItems,
+      notasPedido:  notasConItems,
+      remitos:      remitosConItems,
+    };
+  } finally {
+    client.release();
   }
+}
 
   async delete(id) {
     const client = await pool.connect();
