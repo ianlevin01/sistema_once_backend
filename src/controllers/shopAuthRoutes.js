@@ -3,7 +3,7 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import pool from "../database/db.js";
-import S3Service from "../services/s3Service.js"; // ajustá el path si es diferente
+import S3Service from "../services/S3Service.js"; // ajustá el path si es diferente
 
 const s3 = new S3Service(); // mismo path que el resto del proyecto
 
