@@ -1,14 +1,14 @@
 import pool from "../database/db.js"
 
 export default class CashRepository {
-  async create(mov) {
-    const res = await pool.query(
-      `INSERT INTO cash_movements (type, source, amount)
-       VALUES ($1,$2,$3) RETURNING *`,
-      [mov.type, mov.source, mov.amount]
-    );
-    return res.rows[0];
-  }
+ async create(mov) {
+  const res = await pool.query(
+    `INSERT INTO cash_movements (type, source, amount, divisa)
+     VALUES ($1, $2, $3, $4) RETURNING *`,
+    [mov.type, mov.source, mov.amount, mov.divisa || "ARS"]
+  );
+  return res.rows[0];
+}
 
   async getAll({ from, to } = {}) {
     let query = "SELECT * FROM cash_movements WHERE 1=1";

@@ -56,7 +56,28 @@ export default class ComprobanteService {
 
       // ── Determinar divisa ────────────────────────────────────────────────
       // Se lee del request, si no viene se usa 'ARS' por defecto
-      const divisa = data.divisa || "ARS";
+      let divisa = "ARS";
+ 
+if (esReposicion && data.supplier_id) {
+  // Reposición → divisa del proveedor
+  const provRes = await client.query(
+    `SELECT divisa FROM proveedores WHERE id = $1`,
+    [data.supplier_id]
+  );
+  divisa = provRes.rows[0]?.divisa ?? "ARS";
+ 
+} else if (!esReposicion && data.customer_id && !data.es_consumidor_final) {
+  // Presupuesto / Nota de Pedido con cliente identificado → divisa del cliente
+  const custRes = await client.query(
+    `SELECT divisa FROM customers WHERE id = $1`,
+    [data.customer_id]
+  );
+  divisa = custRes.rows[0]?.divisa ?? "ARS";
+ 
+} else if (data.divisa) {
+  // Fallback: si el frontend mandó divisa explícita (consumidor final, etc.)
+  divisa = data.divisa;
+}
 
       // ── Crear la orden principal ─────────────────────────────────────────
       const order = await client.query(`
@@ -282,18 +303,23 @@ async getListado({ from, to } = {}) {
       const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1);
 
       // ── Presupuestos ─────────────────────────────────────────────
+      // Si divisa = USD, el total guardado está en ARS → convertir
       const presRes = await client.query(`
         SELECT
           o.id,
           o.tipo,
           o.created_at,
-          o.total,
           o.vendedor,
           o.texto_libre,
           o.price_type,
           o.es_consumidor_final,
           o.consumidor_final_nombre,
           COALESCE(NULLIF(o.divisa, ''), 'ARS') AS divisa,
+          CASE
+            WHEN COALESCE(NULLIF(o.divisa, ''), 'ARS') = 'USD'
+            THEN ROUND((o.total / $3)::numeric, 2)
+            ELSE o.total
+          END AS total,
           CASE
             WHEN o.es_consumidor_final THEN COALESCE(o.consumidor_final_nombre, 'Consumidor Final')
             ELSE COALESCE(c.name, pr.name)
@@ -306,9 +332,10 @@ async getListado({ from, to } = {}) {
         WHERE o.tipo IN ('Presupuesto', 'Presupuesto Web')
           AND o.created_at BETWEEN $1 AND $2
         ORDER BY o.created_at DESC
-      `, [dateFrom, dateTo]);
+      `, [dateFrom, dateTo, cotizacion]);
 
       // ── Reposiciones ─────────────────────────────────────────────
+      // Igual: si divisa = USD, convertir
       const reposRes = await client.query(`
         SELECT
           o.id, o.tipo, o.created_at, o.vendedor, o.texto_libre,

@@ -8,7 +8,6 @@ const svc    = new ComprobanteService();
 // ── Crear comprobante ─────────────────────────────────────────
 router.post("/", async (req, res) => {
   const { items } = req.body;
-  console.log(req.body);
 
   const esReposicion      = req.body.tipo === "Reposicion";
   const esConsumidorFinal = !!req.body.es_consumidor_final;
