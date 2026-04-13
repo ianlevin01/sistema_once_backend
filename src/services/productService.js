@@ -1,5 +1,5 @@
 import ProductRepository from "../repositories/productRepository.js";
-import S3Service from "./s3Service.js";
+import S3Service from "./S3Service.js";
 import pool from "../database/db.js";
 
 // ── Caché de config de precios (60s) ─────────────────────────────────────────
