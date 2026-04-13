@@ -113,7 +113,7 @@ export default class ProductRepository {
     return res.rows[0];
   }
 
-  async getById(id) {
+async getById(id) {
     const res = await pool.query(`
       SELECT
         p.*,
@@ -149,13 +149,25 @@ export default class ProductRepository {
           '[]'
         ) AS prices,
 
+        -- Stock por depósito + reservas por depósito en la misma fila
         COALESCE(
           (
             SELECT json_agg(
               json_build_object(
                 'warehouse_id',   s.warehouse_id,
                 'warehouse_name', w.name,
-                'quantity',       s.quantity
+                'quantity',       s.quantity,
+                -- Suma de items en Notas de Pedido activas para este producto
+                -- en este warehouse específico
+                'reserved', COALESCE((
+                  SELECT SUM(oi.quantity)
+                  FROM order_items oi
+                  JOIN orders o ON o.id = oi.order_id
+                  WHERE oi.product_id = p.id
+                    AND o.warehouse_id = s.warehouse_id
+                    AND o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
+                    AND o.status != 'cancelled'
+                ), 0)
               ) ORDER BY w.name
             )
             FROM stock s

@@ -54,23 +54,42 @@ export default class ComprobanteService {
         warehouseId = userRes.rows[0]?.warehouse_id || null;
       }
 
+      // ── Determinar divisa ────────────────────────────────────────────────
+      // Se lee del request, si no viene se usa 'ARS' por defecto
+      const divisa = data.divisa || "ARS";
+
       // ── Crear la orden principal ─────────────────────────────────────────
-      const order = await this.orderRepo.create({
-        customer_id:  data.customer_id  || null,
-        supplier_id:  data.supplier_id  || null,
-        user_id:      data.user_id      || null,
-        warehouse_id: warehouseId,
+      const order = await client.query(`
+        INSERT INTO orders (
+          customer_id, supplier_id, user_id, warehouse_id,
+          total, profit, status, tipo, vendedor, price_type, texto_libre,
+          es_consumidor_final, consumidor_final_nombre, divisa
+        ) VALUES (
+          $1, $2, $3, $4,
+          $5, $6, $7, $8, $9, $10, $11,
+          $12, $13, $14
+        )
+        RETURNING *
+      `, [
+        data.customer_id  || null,
+        data.supplier_id  || null,
+        data.user_id      || null,
+        warehouseId,
         total,
-        profit:       0,
-        status:       "completed",
-        tipo:         tipoFinal,
-        vendedor:     data.vendedor    || null,
-        price_type:   data.price_type  || "precio_1",
-        texto_libre:  data.texto_libre || null,
-      }, client);
+        0,
+        "completed",
+        tipoFinal,
+        data.vendedor    || null,
+        data.price_type  || "precio_1",
+        data.texto_libre || null,
+        data.es_consumidor_final     ? true  : false,
+        data.consumidor_final_nombre || null,
+        divisa,
+      ]);
+      const orderRow = order.rows[0];
 
       for (const item of data.items) {
-        await this.itemRepo.create(item, order.id, client);
+        await this.itemRepo.create(item, orderRow.id, client);
       }
 
       // ── Pago ─────────────────────────────────────────────────────────────
@@ -78,18 +97,17 @@ export default class ComprobanteService {
       await this.paymentRepo.create({
         method: data.payment_method,
         amount: esCuentaCorriente ? 0 : total,
-      }, order.id, client);
+      }, orderRow.id, client);
 
-      // ── Cuenta corriente de cliente (solo Presupuesto + Cta Cte) ─────────
-      // Usa debitarPorComprobante que convierte según la divisa de la cuenta
+      // ── Cuenta corriente de cliente ───────────────────────────────────────
       const esPresupuesto = tipoFinal === "Presupuesto" || tipoFinal === "Presupuesto Web";
-      if (esPresupuesto && esCuentaCorriente && data.customer_id) {
+      if (esPresupuesto && esCuentaCorriente && data.customer_id && !data.es_consumidor_final) {
         await this.ccRepo.debitarPorComprobante(
           data.customer_id,
           {
             total,
-            orderId:  order.id,
-            concepto: `${tipoFinal} — ${order.id.slice(0, 8)}`,
+            orderId:  orderRow.id,
+            concepto: `${tipoFinal} — ${orderRow.id.slice(0, 8)}`,
           },
           client
         );
@@ -99,7 +117,7 @@ export default class ComprobanteService {
       if (data.web_order_id) {
         await client.query(
           `UPDATE web_orders SET order_id = $1, updated_at = now() WHERE id = $2`,
-          [order.id, data.web_order_id]
+          [orderRow.id, data.web_order_id]
         );
       }
 
@@ -120,17 +138,26 @@ export default class ComprobanteService {
           const removedTotal = data.removed_items.reduce(
             (acc, i) => acc + (i.unit_price || 0) * i.quantity, 0
           );
-          const notaParalela = await this.orderRepo.create({
-            customer_id:  data.customer_id,
-            user_id:      null,
-            total:        removedTotal,
-            profit:       0,
-            status:       "completed",
-            tipo:         tipoFinal === "Presupuesto Web" ? "Nota de Pedido Web" : "Nota de Pedido",
-            vendedor:     data.vendedor    || null,
-            price_type:   data.price_type  || "precio_1",
-            texto_libre:  data.texto_libre || null,
-          }, client);
+          const notaParalelaRes = await client.query(`
+            INSERT INTO orders (
+              customer_id, user_id, total, profit, status, tipo,
+              vendedor, price_type, texto_libre, es_consumidor_final, divisa
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            RETURNING *
+          `, [
+            data.customer_id,
+            null,
+            removedTotal,
+            0,
+            "completed",
+            tipoFinal === "Presupuesto Web" ? "Nota de Pedido Web" : "Nota de Pedido",
+            data.vendedor   || null,
+            data.price_type || "precio_1",
+            data.texto_libre || null,
+            false,
+            divisa,
+          ]);
+          const notaParalela = notaParalelaRes.rows[0];
           for (const item of data.removed_items) {
             await this.itemRepo.create(item, notaParalela.id, client);
           }
@@ -181,17 +208,16 @@ export default class ComprobanteService {
       }
 
       // ── Acreditar saldo al proveedor por reposición ───────────────────────
-      // proveedorRepo.acreditarReposicion ya convierte según divisa del proveedor
       if (esReposicion && data.supplier_id && total > 0) {
         await this.proveedorRepo.acreditarReposicion(
           data.supplier_id,
-          { monto: total, orderId: order.id },
+          { monto: total, orderId: orderRow.id },
           client
         );
       }
 
       await client.query("COMMIT");
-      return order;
+      return orderRow;
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
@@ -244,119 +270,131 @@ export default class ComprobanteService {
   getAll(filters) { return this.orderRepo.getAll(filters); }
 
 async getListado({ from, to } = {}) {
-  const client = await pool.connect();
-  try {
-    const dateFrom = from ? `${from} 00:00:00` : "1970-01-01";
-    const dateTo   = to   ? `${to} 23:59:59`   : "2099-12-31";
+    const client = await pool.connect();
+    try {
+      const dateFrom = from ? `${from} 00:00:00` : "1970-01-01";
+      const dateTo   = to   ? `${to} 23:59:59`   : "2099-12-31";
 
-    // ── Cotización dólar vigente ─────────────────────────────────
-    const cotizRes = await client.query(
-      `SELECT cotizacion_dolar FROM price_config ORDER BY updated_at DESC LIMIT 1`
-    );
-    const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1);
+      // ── Cotización dólar vigente ─────────────────────────────────
+      const cotizRes = await client.query(
+        `SELECT cotizacion_dolar FROM price_config ORDER BY updated_at DESC LIMIT 1`
+      );
+      const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1);
 
-    // ── Presupuestos ─────────────────────────────────────────────
-    const presRes = await client.query(`
-      SELECT
-        o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
-        COALESCE(c.name, pr.name) AS customer_name,
-        p.method AS payment_method
-      FROM orders o
-      LEFT JOIN customers   c  ON c.id  = o.customer_id
-      LEFT JOIN proveedores pr ON pr.id = o.supplier_id
-      LEFT JOIN payments    p  ON p.order_id = o.id
-      WHERE o.tipo IN ('Presupuesto', 'Presupuesto Web')
-        AND o.created_at BETWEEN $1 AND $2
-      ORDER BY o.created_at DESC
-    `, [dateFrom, dateTo]);
+      // ── Presupuestos ─────────────────────────────────────────────
+      const presRes = await client.query(`
+        SELECT
+          o.id,
+          o.tipo,
+          o.created_at,
+          o.total,
+          o.vendedor,
+          o.texto_libre,
+          o.price_type,
+          o.es_consumidor_final,
+          o.consumidor_final_nombre,
+          COALESCE(NULLIF(o.divisa, ''), 'ARS') AS divisa,
+          CASE
+            WHEN o.es_consumidor_final THEN COALESCE(o.consumidor_final_nombre, 'Consumidor Final')
+            ELSE COALESCE(c.name, pr.name)
+          END AS customer_name,
+          p.method AS payment_method
+        FROM orders o
+        LEFT JOIN customers   c  ON c.id  = o.customer_id
+        LEFT JOIN proveedores pr ON pr.id = o.supplier_id
+        LEFT JOIN payments    p  ON p.order_id = o.id
+        WHERE o.tipo IN ('Presupuesto', 'Presupuesto Web')
+          AND o.created_at BETWEEN $1 AND $2
+        ORDER BY o.created_at DESC
+      `, [dateFrom, dateTo]);
 
-    // ── Reposiciones — total convertido a USD si corresponde ─────
-    const reposRes = await client.query(`
-      SELECT
-        o.id, o.tipo, o.created_at, o.vendedor, o.texto_libre,
-        o.supplier_id, o.warehouse_id,
-        pr.name  AS supplier_name,
-        w.name   AS warehouse_name,
-        COALESCE(pr.divisa, 'ARS') AS divisa,
-        CASE
-          WHEN COALESCE(pr.divisa, 'ARS') = 'USD'
-          THEN ROUND((o.total / $3)::numeric, 2)
-          ELSE o.total
-        END AS total
-      FROM orders o
-      LEFT JOIN proveedores pr ON pr.id = o.supplier_id
-      LEFT JOIN warehouses  w  ON w.id  = o.warehouse_id
-      WHERE o.tipo = 'Reposicion'
-        AND o.created_at BETWEEN $1 AND $2
-      ORDER BY o.created_at DESC
-    `, [dateFrom, dateTo, cotizacion]);
+      // ── Reposiciones ─────────────────────────────────────────────
+      const reposRes = await client.query(`
+        SELECT
+          o.id, o.tipo, o.created_at, o.vendedor, o.texto_libre,
+          o.supplier_id, o.warehouse_id,
+          pr.name AS supplier_name,
+          w.name  AS warehouse_name,
+          COALESCE(NULLIF(o.divisa, ''), 'ARS') AS divisa,
+          CASE
+            WHEN COALESCE(NULLIF(o.divisa, ''), 'ARS') = 'USD'
+            THEN ROUND((o.total / $3)::numeric, 2)
+            ELSE o.total
+          END AS total
+        FROM orders o
+        LEFT JOIN proveedores pr ON pr.id = o.supplier_id
+        LEFT JOIN warehouses  w  ON w.id  = o.warehouse_id
+        WHERE o.tipo = 'Reposicion'
+          AND o.created_at BETWEEN $1 AND $2
+        ORDER BY o.created_at DESC
+      `, [dateFrom, dateTo, cotizacion]);
 
-    const reposConItems = await Promise.all(
-      reposRes.rows.map(async (r) => {
-        const itemsRes = await client.query(`
-          SELECT oi.*, p.name, p.code
-          FROM order_items oi
-          LEFT JOIN products p ON p.id = oi.product_id
-          WHERE oi.order_id = $1
-        `, [r.id]);
-        return { ...r, items: itemsRes.rows };
-      })
-    );
+      const reposConItems = await Promise.all(
+        reposRes.rows.map(async (r) => {
+          const itemsRes = await client.query(`
+            SELECT oi.*, p.name, p.code
+            FROM order_items oi
+            LEFT JOIN products p ON p.id = oi.product_id
+            WHERE oi.order_id = $1
+          `, [r.id]);
+          return { ...r, items: itemsRes.rows };
+        })
+      );
 
-    // ── Notas de Pedido — SIN filtro de fecha, siempre todas ─────
-    const notasRes = await client.query(`
-      SELECT
-        o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
-        o.customer_id, c.name AS customer_name
-      FROM orders o
-      LEFT JOIN customers c ON c.id = o.customer_id
-      WHERE o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
-      ORDER BY o.created_at DESC
-    `);
+      // ── Notas de Pedido (sin filtro de fecha) ────────────────────
+      const notasRes = await client.query(`
+        SELECT
+          o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
+          o.customer_id, c.name AS customer_name
+        FROM orders o
+        LEFT JOIN customers c ON c.id = o.customer_id
+        WHERE o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
+        ORDER BY o.created_at DESC
+      `);
 
-    const notasConItems = await Promise.all(
-      notasRes.rows.map(async (nota) => {
-        const itemsRes = await client.query(`
-          SELECT oi.*, p.name, p.code
-          FROM order_items oi
-          LEFT JOIN products p ON p.id = oi.product_id
-          WHERE oi.order_id = $1
-        `, [nota.id]);
-        return { ...nota, items: itemsRes.rows };
-      })
-    );
+      const notasConItems = await Promise.all(
+        notasRes.rows.map(async (nota) => {
+          const itemsRes = await client.query(`
+            SELECT oi.*, p.name, p.code
+            FROM order_items oi
+            LEFT JOIN products p ON p.id = oi.product_id
+            WHERE oi.order_id = $1
+          `, [nota.id]);
+          return { ...nota, items: itemsRes.rows };
+        })
+      );
 
-    // ── Remitos ──────────────────────────────────────────────────
-    const remitosRes = await client.query(`
-      SELECT o.id, o.created_at, o.total, o.vendedor, o.origen, o.destino
-      FROM orders o
-      WHERE o.tipo = 'Remito'
-        AND o.created_at BETWEEN $1 AND $2
-      ORDER BY o.created_at DESC
-    `, [dateFrom, dateTo]);
+      // ── Remitos ──────────────────────────────────────────────────
+      const remitosRes = await client.query(`
+        SELECT o.id, o.created_at, o.total, o.vendedor, o.origen, o.destino
+        FROM orders o
+        WHERE o.tipo = 'Remito'
+          AND o.created_at BETWEEN $1 AND $2
+        ORDER BY o.created_at DESC
+      `, [dateFrom, dateTo]);
 
-    const remitosConItems = await Promise.all(
-      remitosRes.rows.map(async (r) => {
-        const itemsRes = await client.query(`
-          SELECT oi.*, p.name, p.code
-          FROM order_items oi
-          LEFT JOIN products p ON p.id = oi.product_id
-          WHERE oi.order_id = $1
-        `, [r.id]);
-        return { ...r, items: itemsRes.rows };
-      })
-    );
+      const remitosConItems = await Promise.all(
+        remitosRes.rows.map(async (r) => {
+          const itemsRes = await client.query(`
+            SELECT oi.*, p.name, p.code
+            FROM order_items oi
+            LEFT JOIN products p ON p.id = oi.product_id
+            WHERE oi.order_id = $1
+          `, [r.id]);
+          return { ...r, items: itemsRes.rows };
+        })
+      );
 
-    return {
-      presupuestos: presRes.rows,
-      reposiciones: reposConItems,
-      notasPedido:  notasConItems,
-      remitos:      remitosConItems,
-    };
-  } finally {
-    client.release();
+      return {
+        presupuestos: presRes.rows,
+        reposiciones: reposConItems,
+        notasPedido:  notasConItems,
+        remitos:      remitosConItems,
+      };
+    } finally {
+      client.release();
+    }
   }
-}
 
   async delete(id) {
     const client = await pool.connect();

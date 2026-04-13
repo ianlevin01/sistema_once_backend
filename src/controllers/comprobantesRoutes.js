@@ -8,15 +8,21 @@ const svc    = new ComprobanteService();
 // ── Crear comprobante ─────────────────────────────────────────
 router.post("/", async (req, res) => {
   const { items } = req.body;
+  console.log(req.body);
 
-  // Reposicion requiere supplier_id; el resto requiere customer_id
-  const esReposicion = req.body.tipo === "Reposicion";
-  if (!esReposicion && !req.body.customer_id) {
-    return res.status(400).json({ message: "Datos incompletos: falta customer_id" });
-  }
+  const esReposicion      = req.body.tipo === "Reposicion";
+  const esConsumidorFinal = !!req.body.es_consumidor_final;
+
+  // Reposicion requiere supplier_id
   if (esReposicion && !req.body.supplier_id) {
     return res.status(400).json({ message: "Datos incompletos: falta supplier_id para Reposicion" });
   }
+
+  // Presupuesto/Devolucion/etc.: requiere customer_id SALVO que sea consumidor final
+  if (!esReposicion && !esConsumidorFinal && !req.body.customer_id) {
+    return res.status(400).json({ message: "Datos incompletos: falta customer_id" });
+  }
+
   if (!req.body.payment_method || !items?.length) {
     return res.status(400).json({ message: "Datos incompletos" });
   }
