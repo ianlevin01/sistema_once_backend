@@ -37,6 +37,10 @@ const BUCKET ="onces3";
   async delete(key) {
     const s3 = new S3Client({
   region: "sa-east-1",
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY,
+    secretAccessKey:process.env.AWS_SECRET_KEY
+  }
 });
 
 const BUCKET = "onces3";
@@ -49,6 +53,10 @@ const BUCKET = "onces3";
   async getSignedUrl(key) {
     const s3 = new S3Client({
   region: "sa-east-1",
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY,
+    secretAccessKey:process.env.AWS_SECRET_KEY
+  }
 });
 
 const BUCKET = "onces3";
