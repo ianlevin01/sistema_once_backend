@@ -8,20 +8,15 @@ const svc    = new ComprobanteService();
 // ── Crear comprobante ─────────────────────────────────────────
 router.post("/", async (req, res) => {
   const { items } = req.body;
-
   const esReposicion      = req.body.tipo === "Reposicion";
   const esConsumidorFinal = !!req.body.es_consumidor_final;
 
-  // Reposicion requiere supplier_id
   if (esReposicion && !req.body.supplier_id) {
     return res.status(400).json({ message: "Datos incompletos: falta supplier_id para Reposicion" });
   }
-
-  // Presupuesto/Devolucion/etc.: requiere customer_id SALVO que sea consumidor final
   if (!esReposicion && !esConsumidorFinal && !req.body.customer_id) {
     return res.status(400).json({ message: "Datos incompletos: falta customer_id" });
   }
-
   if (!req.body.payment_method || !items?.length) {
     return res.status(400).json({ message: "Datos incompletos" });
   }
@@ -31,6 +26,22 @@ router.post("/", async (req, res) => {
     return res.status(201).json(result);
   } catch (err) {
     console.error("Error POST /comprobantes:", err);
+    return res.status(500).json({ message: err.message || "Error interno" });
+  }
+});
+
+// ── Editar comprobante ────────────────────────────────────────
+// Body: { items, vendedor?, texto_libre?, price_type?, payment_method? }
+router.put("/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!req.body.items?.length) {
+    return res.status(400).json({ message: "Se requiere al menos un item" });
+  }
+  try {
+    const result = await svc.update(id, req.body);
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("Error PUT /comprobantes/:id:", err);
     return res.status(500).json({ message: err.message || "Error interno" });
   }
 });
@@ -48,7 +59,6 @@ router.get("/listado", async (req, res) => {
 });
 
 // ── Último precio de un producto para un cliente ──────────────
-// GET /comprobantes/last-price?customer_id=...&product_id=...
 router.get("/last-price", async (req, res) => {
   const { customer_id, product_id } = req.query;
   if (!customer_id || !product_id) {
@@ -63,7 +73,7 @@ router.get("/last-price", async (req, res) => {
   }
 });
 
-// ── Listado de warehouses (para selector en Reposicion) ───────
+// ── Listado de warehouses ─────────────────────────────────────
 router.get("/warehouses", async (_req, res) => {
   try {
     const result = await pool.query(`SELECT id, name FROM warehouses ORDER BY name`);
@@ -87,14 +97,14 @@ router.get("/", async (req, res) => {
   return res.status(200).json(result);
 });
 
-// ── Eliminar ──────────────────────────────────────────────────
+// ── Eliminar (revierte stock + CC) ───────────────────────────
 router.delete("/:id", async (req, res) => {
   try {
     await svc.delete(req.params.id);
     return res.status(200).json({ message: "Eliminado" });
   } catch (err) {
     console.error("Error DELETE /comprobantes:", err);
-    return res.status(500).json({ message: "Error interno" });
+    return res.status(500).json({ message: err.message || "Error interno" });
   }
 });
 

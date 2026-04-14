@@ -1,102 +1,210 @@
-  import { Router } from "express";
-  import CuentaCorrienteService from "../services/cuentaCorrienteService.js";
+import { Router } from "express";
+import pool from "../database/db.js";
+import CuentaCorrienteService from "../services/cuentaCorrienteService.js";
 
-  const router = Router();
-  const svc = new CuentaCorrienteService();
+const router = Router();
+const svc = new CuentaCorrienteService();
 
-  // GET todas las cuentas corrientes
-  router.get("/", async (req, res) => {
-    try {
-      const result = await svc.getAll();
-      return res.status(200).json(result);
-    } catch (err) {
-      console.error("Error en GET /cuenta-corriente:", err);
-      return res.status(500).json({ message: "Error interno" });
+// GET todas las cuentas corrientes
+router.get("/", async (req, res) => {
+  try {
+    const result = await svc.getAll();
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("Error en GET /cuenta-corriente:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// GET cuenta corriente de un cliente (con movimientos)
+router.get("/cliente/:customerId", async (req, res) => {
+  try {
+    const result = await svc.getByCustomer(req.params.customerId);
+    if (!result) {
+      const nueva = await svc.getOrCreate(req.params.customerId);
+      return res.status(200).json({ ...nueva, movimientos: [] });
     }
-  });
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("Error en GET /cuenta-corriente/cliente/:id:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
 
-  // GET cuenta corriente de un cliente (con movimientos)
-  router.get("/cliente/:customerId", async (req, res) => {
-    try {
-      const result = await svc.getByCustomer(req.params.customerId);
-      if (!result) {
-        const nueva = await svc.getOrCreate(req.params.customerId);
-        return res.status(200).json({ ...nueva, movimientos: [] });
-      }
-      return res.status(200).json(result);
-    } catch (err) {
-      console.error("Error en GET /cuenta-corriente/cliente/:id:", err);
-      return res.status(500).json({ message: "Error interno" });
+// POST registrar pago (legacy)
+router.post("/cliente/:customerId/pago", async (req, res) => {
+  const { monto, concepto } = req.body;
+  if (!monto || Number(monto) <= 0)
+    return res.status(400).json({ message: "Monto inválido" });
+  try {
+    const result = await svc.registrarPago(req.params.customerId, {
+      monto: Number(monto), concepto,
+    });
+    return res.status(200).json(result);
+  } catch (err) {
+    return res.status(400).json({ message: err.message });
+  }
+});
+
+// POST agregar saldo a favor (legacy)
+router.post("/cliente/:customerId/saldo", async (req, res) => {
+  const { monto, concepto } = req.body;
+  if (!monto || Number(monto) <= 0)
+    return res.status(400).json({ message: "Monto inválido" });
+  try {
+    const result = await svc.agregarSaldo(req.params.customerId, {
+      monto: Number(monto), concepto,
+    });
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("Error en POST /cuenta-corriente/cliente/:id/saldo:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// POST registrar cobranza
+router.post("/cliente/:customerId/cobranza", async (req, res) => {
+  const { monto, concepto, metodo_pago, divisa_cobro } = req.body;
+  if (!monto || Number(monto) <= 0)
+    return res.status(400).json({ message: "Monto inválido" });
+  if (!metodo_pago)
+    return res.status(400).json({ message: "Método de pago obligatorio" });
+  try {
+    const result = await svc.registrarCobranza(req.params.customerId, {
+      monto:       Number(monto),
+      concepto:    concepto || "Cobranza",
+      metodo_pago,
+      divisa_cobro: divisa_cobro || null,
+    });
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("Error en POST /cuenta-corriente/cliente/:id/cobranza:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// PUT /movimientos/:movId  — editar un movimiento de cliente
+// Body: { monto?, concepto?, metodo_pago? }
+// ─────────────────────────────────────────────────────────────
+router.put("/movimientos/:movId", async (req, res) => {
+  const { movId } = req.params;
+  const { monto, concepto, metodo_pago } = req.body;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Leer movimiento actual
+    const movRes = await client.query(
+      `SELECT m.*, cc.divisa AS divisa_cuenta, cc.id AS cc_id, cc.saldo AS cc_saldo
+       FROM cc_movimientos m
+       JOIN cuentas_corrientes cc ON cc.id = m.cuenta_corriente_id
+       WHERE m.id = $1`,
+      [movId]
+    );
+    const mov = movRes.rows[0];
+    if (!mov) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Movimiento no encontrado" });
     }
-  });
 
-  // POST registrar pago (legacy)
-  router.post("/cliente/:customerId/pago", async (req, res) => {
-    const { monto, concepto } = req.body;
-    if (!monto || Number(monto) <= 0)
-      return res.status(400).json({ message: "Monto inválido" });
-    try {
-      const result = await svc.registrarPago(req.params.customerId, {
-        monto: Number(monto),
-        concepto,
-      });
-      return res.status(200).json(result);
-    } catch (err) {
-      return res.status(400).json({ message: err.message });
+    const montoAnterior = Number(mov.monto);
+    let montoNuevo = monto !== undefined ? Number(monto) : montoAnterior;
+
+    // Si el monto cambió, recalcular saldo de la cuenta
+    if (montoNuevo !== montoAnterior) {
+      const diff = montoNuevo - montoAnterior;
+      // Para débito: saldo sube con diff; para pago: saldo baja con diff
+      const saldoDelta = mov.tipo === "debito" ? diff : -diff;
+
+      await client.query(
+        `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+        [saldoDelta, mov.cc_id]
+      );
     }
-  });
 
-  // POST agregar saldo a favor (legacy)
-  router.post("/cliente/:customerId/saldo", async (req, res) => {
-    const { monto, concepto } = req.body;
-    if (!monto || Number(monto) <= 0)
-      return res.status(400).json({ message: "Monto inválido" });
-    try {
-      const result = await svc.agregarSaldo(req.params.customerId, {
-        monto: Number(monto),
-        concepto,
-      });
-      return res.status(200).json(result);
-    } catch (err) {
-      console.error("Error en POST /cuenta-corriente/cliente/:id/saldo:", err);
-      return res.status(500).json({ message: "Error interno" });
+    // Actualizar el movimiento
+    const updates = {};
+    if (monto      !== undefined) updates.monto      = montoNuevo;
+    if (concepto   !== undefined) updates.concepto   = concepto;
+    if (metodo_pago !== undefined) updates.metodo_pago = metodo_pago;
+
+    if (Object.keys(updates).length > 0) {
+      const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);
+      await client.query(
+        `UPDATE cc_movimientos SET ${setClauses.join(", ")} WHERE id = $1`,
+        [movId, ...Object.values(updates)]
+      );
     }
-  });
 
-  // POST registrar cobranza
-  // Body: { monto, concepto?, metodo_pago, divisa_cobro? }
-  // divisa_cobro: 'ARS' | 'USD' — en qué moneda pagó el cliente físicamente
-  //               Si se omite, se asume la divisa de la cuenta
-  router.post("/cliente/:customerId/cobranza", async (req, res) => {
-    const { monto, concepto, metodo_pago, divisa_cobro } = req.body;
-    if (!monto || Number(monto) <= 0)
-      return res.status(400).json({ message: "Monto inválido" });
-    if (!metodo_pago)
-      return res.status(400).json({ message: "Método de pago obligatorio" });
-    try {
-      const result = await svc.registrarCobranza(req.params.customerId, {
-        monto:       Number(monto),
-        concepto:    concepto || "Cobranza",
-        metodo_pago,
-        divisa_cobro: divisa_cobro || null,
-      });
-      return res.status(200).json(result);
-    } catch (err) {
-      console.error("Error en POST /cuenta-corriente/cliente/:id/cobranza:", err);
-      return res.status(500).json({ message: "Error interno" });
+    await client.query("COMMIT");
+
+    // Devolver CC actualizada
+    const ccRes = await client.query(
+      `SELECT cc.*, c.name AS customer_name FROM cuentas_corrientes cc
+       JOIN customers c ON c.id = cc.customer_id WHERE cc.id = $1`,
+      [mov.cc_id]
+    );
+    return res.status(200).json(ccRes.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Error PUT /cuenta-corriente/movimientos/:id:", err);
+    return res.status(500).json({ message: err.message || "Error interno" });
+  } finally {
+    client.release();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// DELETE /movimientos/:movId — eliminar movimiento de cliente
+// ─────────────────────────────────────────────────────────────
+router.delete("/movimientos/:movId", async (req, res) => {
+  const { movId } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const movRes = await client.query(
+      `SELECT m.*, cc.id AS cc_id FROM cc_movimientos m
+       JOIN cuentas_corrientes cc ON cc.id = m.cuenta_corriente_id
+       WHERE m.id = $1`,
+      [movId]
+    );
+    const mov = movRes.rows[0];
+    if (!mov) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Movimiento no encontrado" });
     }
-  });
 
-  // GET cobranzas por rango de fecha (para CajaListado)
-  router.get("/cobranzas", async (req, res) => {
-    const { from, to } = req.query;
-    try {
-      const result = await svc.getCobranzas(from, to);
-      return res.status(200).json(result);
-    } catch (err) {
-      console.error("Error en GET /cuenta-corriente/cobranzas:", err);
-      return res.status(500).json({ message: "Error interno" });
-    }
-  });
+    const saldoDelta = mov.tipo === "debito" ? -Number(mov.monto) : Number(mov.monto);
+    await client.query(
+      `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+      [saldoDelta, mov.cc_id]
+    );
+    await client.query(`DELETE FROM cc_movimientos WHERE id = $1`, [movId]);
 
-  export default router;
+    await client.query("COMMIT");
+    return res.status(200).json({ message: "Eliminado" });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Error DELETE /cuenta-corriente/movimientos/:id:", err);
+    return res.status(500).json({ message: "Error interno" });
+  } finally {
+    client.release();
+  }
+});
+
+// GET cobranzas por rango de fecha
+router.get("/cobranzas", async (req, res) => {
+  const { from, to } = req.query;
+  try {
+    const result = await svc.getCobranzas(from, to);
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("Error en GET /cuenta-corriente/cobranzas:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+export default router;

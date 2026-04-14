@@ -6,7 +6,6 @@ export default class RemitoService {
   orderRepo = new OrderRepository();
   itemRepo  = new OrderItemRepository();
 
-  // ── Helper: busca el warehouse_id canónico por nombre (case-insensitive) ──
   async #findWarehouseId(client, name) {
     const res = await client.query(
       `SELECT id FROM warehouses WHERE TRIM(name) ILIKE TRIM($1) ORDER BY id LIMIT 1`,
@@ -18,31 +17,18 @@ export default class RemitoService {
     return res.rows[0]?.id || null;
   }
 
-  // ── Helper: ajusta stock en un warehouse ──
+  // ── Helper: ajusta stock en un warehouse, permite negativos ──
+  // El stock de remitos no tiene piso en 0 — si salen más de lo que hay
+  // el número queda negativo (deuda de mercadería), y al revertir
+  // vuelve exactamente al valor anterior.
   async #adjustStock(client, productId, warehouseId, delta) {
-    // Asegurar que existe la fila
     await client.query(
       `INSERT INTO stock (product_id, warehouse_id, quantity)
-       VALUES ($1, $2, 0)
-       ON CONFLICT (product_id, warehouse_id) DO NOTHING`,
-      [productId, warehouseId]
+       VALUES ($1, $2, $3)
+       ON CONFLICT (product_id, warehouse_id)
+       DO UPDATE SET quantity = stock.quantity + EXCLUDED.quantity`,
+      [productId, warehouseId, delta]
     );
-    // Aplicar delta; si es negativo nunca baja de 0
-    if (delta < 0) {
-      await client.query(
-        `UPDATE stock
-         SET quantity = GREATEST(0, quantity + $1)
-         WHERE product_id = $2 AND warehouse_id = $3`,
-        [delta, productId, warehouseId]
-      );
-    } else {
-      await client.query(
-        `UPDATE stock
-         SET quantity = quantity + $1
-         WHERE product_id = $2 AND warehouse_id = $3`,
-        [delta, productId, warehouseId]
-      );
-    }
   }
 
   async createRemito(data) {
@@ -76,16 +62,8 @@ export default class RemitoService {
 
       for (const item of data.items) {
         if (!item.product_id) continue;
-
-        // ORIGEN: descontar
-        if (origenId) {
-          await this.#adjustStock(client, item.product_id, origenId, -item.quantity);
-        }
-
-        // DESTINO: sumar
-        if (destinoId) {
-          await this.#adjustStock(client, item.product_id, destinoId, item.quantity);
-        }
+        if (origenId)  await this.#adjustStock(client, item.product_id, origenId,  -item.quantity);
+        if (destinoId) await this.#adjustStock(client, item.product_id, destinoId,  item.quantity);
       }
 
       await client.query("COMMIT");
@@ -98,12 +76,9 @@ export default class RemitoService {
     }
   }
 
-  // ── getById con items completos (nombre + código del producto) ────────────
   async getById(id) {
     const { rows } = await pool.query(
-      `SELECT
-         o.*,
-         c.name AS customer_name
+      `SELECT o.*, c.name AS customer_name
        FROM orders o
        LEFT JOIN customers c ON c.id = o.customer_id
        WHERE o.id = $1`,
@@ -112,14 +87,8 @@ export default class RemitoService {
     if (!rows[0]) return null;
 
     const itemsRes = await pool.query(
-      `SELECT
-         oi.id,
-         oi.product_id,
-         oi.quantity,
-         oi.unit_price,
-         oi.cost,
-         p.name,
-         p.code
+      `SELECT oi.id, oi.product_id, oi.quantity, oi.unit_price, oi.cost,
+              p.name, p.code
        FROM order_items oi
        LEFT JOIN products p ON p.id = oi.product_id
        WHERE oi.order_id = $1
@@ -134,47 +103,34 @@ export default class RemitoService {
     return this.orderRepo.getAllByTipo("Remito", { from, to });
   }
 
-  // ── delete: revierte el stock antes de borrar ─────────────────────────────
   async delete(id) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      // 1) Obtener datos del remito antes de borrar
       const orderRes = await client.query(
-        `SELECT origen, destino FROM orders WHERE id = $1`,
-        [id]
+        `SELECT origen, destino FROM orders WHERE id = $1`, [id]
       );
       const order = orderRes.rows[0];
 
-      // 2) Obtener items
       const itemsRes = await client.query(
-        `SELECT product_id, quantity FROM order_items WHERE order_id = $1`,
-        [id]
+        `SELECT product_id, quantity FROM order_items WHERE order_id = $1`, [id]
       );
       const items = itemsRes.rows;
 
-      // 3) Revertir stock si hay datos de origen/destino
       if (order && items.length > 0) {
         const origenId  = order.origen  ? await this.#findWarehouseId(client, order.origen)  : null;
         const destinoId = order.destino ? await this.#findWarehouseId(client, order.destino) : null;
 
         for (const item of items) {
           if (!item.product_id) continue;
-
-          // Devolver al origen
-          if (origenId) {
-            await this.#adjustStock(client, item.product_id, origenId, item.quantity);
-          }
-
-          // Quitar del destino
-          if (destinoId) {
-            await this.#adjustStock(client, item.product_id, destinoId, -item.quantity);
-          }
+          // Revertir exactamente: devolver lo que se descontó del origen,
+          // quitar lo que se sumó al destino. Sin piso en 0.
+          if (origenId)  await this.#adjustStock(client, item.product_id, origenId,   item.quantity);
+          if (destinoId) await this.#adjustStock(client, item.product_id, destinoId, -item.quantity);
         }
       }
 
-      // 4) Borrar items y orden
       await client.query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
       await client.query(`DELETE FROM orders WHERE id = $1`, [id]);
 

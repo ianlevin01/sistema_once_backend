@@ -1,5 +1,6 @@
 import { Router } from "express";
 import ProveedorRepository from "../repositories/proveedorRepository.js";
+import pool from "../database/db.js";
 
 const router = Router();
 const repo   = new ProveedorRepository();
@@ -122,6 +123,110 @@ router.post("/:id/cobranza", async (req, res) => {
   } catch (err) {
     console.error("POST /proveedores/:id/cobranza:", err);
     return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Agregar estas rutas al archivo proveedorRoutes.js existente
+// (o al archivo donde estén las rutas de proveedores)
+// ─────────────────────────────────────────────────────────────
+
+// PUT /proveedores/movimientos/:movId — editar movimiento de proveedor
+router.put("/movimientos/:movId", async (req, res) => {
+  const { movId } = req.params;
+  const { monto, concepto, metodo_pago } = req.body;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const movRes = await client.query(
+      `SELECT m.*, cc.id AS cc_id FROM cc_movimientos_prov m
+       JOIN cuentas_corrientes_prov cc ON cc.id = m.cuenta_corriente_id
+       WHERE m.id = $1`,
+      [movId]
+    );
+    const mov = movRes.rows[0];
+    if (!mov) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Movimiento no encontrado" });
+    }
+
+    const montoAnterior = Number(mov.monto);
+    const montoNuevo    = monto !== undefined ? Number(monto) : montoAnterior;
+
+    if (montoNuevo !== montoAnterior) {
+      const diff = montoNuevo - montoAnterior;
+      // Para prov: "pago" = saldo sube (proveedor tiene más crédito), "debito" = saldo baja
+      const saldoDelta = mov.tipo === "pago" ? diff : -diff;
+      await client.query(
+        `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+        [saldoDelta, mov.cc_id]
+      );
+    }
+
+    const updates = {};
+    if (monto       !== undefined) updates.monto       = montoNuevo;
+    if (concepto    !== undefined) updates.concepto    = concepto;
+    if (metodo_pago !== undefined) updates.metodo_pago = metodo_pago;
+
+    if (Object.keys(updates).length > 0) {
+      const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);
+      await client.query(
+        `UPDATE cc_movimientos_prov SET ${setClauses.join(", ")} WHERE id = $1`,
+        [movId, ...Object.values(updates)]
+      );
+    }
+
+    await client.query("COMMIT");
+
+    const ccRes = await client.query(
+      `SELECT * FROM cuentas_corrientes_prov WHERE id = $1`, [mov.cc_id]
+    );
+    return res.status(200).json(ccRes.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Error PUT /proveedores/movimientos/:id:", err);
+    return res.status(500).json({ message: err.message || "Error interno" });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /proveedores/movimientos/:movId — eliminar movimiento de proveedor
+router.delete("/movimientos/:movId", async (req, res) => {
+  const { movId } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const movRes = await client.query(
+      `SELECT m.*, cc.id AS cc_id FROM cc_movimientos_prov m
+       JOIN cuentas_corrientes_prov cc ON cc.id = m.cuenta_corriente_id
+       WHERE m.id = $1`,
+      [movId]
+    );
+    const mov = movRes.rows[0];
+    if (!mov) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Movimiento no encontrado" });
+    }
+
+    // "pago" sumó saldo → al eliminar restar; "debito" restó saldo → al eliminar sumar
+    const saldoDelta = mov.tipo === "pago" ? -Number(mov.monto) : Number(mov.monto);
+    await client.query(
+      `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+      [saldoDelta, mov.cc_id]
+    );
+    await client.query(`DELETE FROM cc_movimientos_prov WHERE id = $1`, [movId]);
+
+    await client.query("COMMIT");
+    return res.status(200).json({ message: "Eliminado" });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    return res.status(500).json({ message: "Error interno" });
+  } finally {
+    client.release();
   }
 });
 
