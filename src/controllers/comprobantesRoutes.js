@@ -1,6 +1,7 @@
 import { Router } from "express";
 import pool from "../database/db.js";
 import ComprobanteService from "../services/comprobanteService.js";
+import { requireAuth } from "./authRoutes.js";
 
 const router = Router();
 const svc    = new ComprobanteService();
@@ -47,10 +48,15 @@ router.put("/:id", async (req, res) => {
 });
 
 // ── Listado agrupado para CajaListado ─────────────────────────
-router.get("/listado", async (req, res) => {
+router.get("/listado", requireAuth, async (req, res) => {
   const { from, to } = req.query;
   try {
-    const result = await svc.getListado({ from, to });
+    const result = await svc.getListado({
+      from,
+      to,
+      warehouseId:   req.user.warehouse_id,
+      warehouseName: req.user.warehouse_name,
+    });
     return res.status(200).json(result);
   } catch (err) {
     console.error("Error en /comprobantes/listado:", err);
@@ -91,9 +97,9 @@ router.get("/:id", async (req, res) => {
 });
 
 // ── Listado con filtros ───────────────────────────────────────
-router.get("/", async (req, res) => {
+router.get("/", requireAuth, async (req, res) => {
   const { from, to } = req.query;
-  const result = await svc.getAll({ from, to });
+  const result = await svc.getAll({ from, to, warehouseId: req.user.warehouse_id });
   return res.status(200).json(result);
 });
 

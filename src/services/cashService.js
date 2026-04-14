@@ -3,12 +3,12 @@ import CashRepository from "../repositories/cashRepository.js";
 export default class CashService {
   repo = new CashRepository();
 
-  create(mov) {
-    return this.repo.create(mov);
+  create(mov, warehouseId) {
+    return this.repo.create({ ...mov, warehouse_id: warehouseId || null });
   }
 
-  getAll({ from, to } = {}) {
-    return this.repo.getAll({ from, to });
+  getAll({ from, to, warehouseId } = {}) {
+    return this.repo.getAll({ from, to, warehouseId });
   }
 
   getById(id) {

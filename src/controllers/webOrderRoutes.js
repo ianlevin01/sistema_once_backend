@@ -1,5 +1,6 @@
 import { Router } from "express";
 import WebOrderService from "../services/webOrderService.js";
+import { requireAuth } from "./authRoutes.js";
 import jwt from "jsonwebtoken";
 
 const router = Router();
@@ -76,11 +77,11 @@ router.patch("/:id/color", async (req, res) => {
   return res.status(200).json(result);
 });
 
-router.patch("/:id/reservado", async (req, res) => {
+router.patch("/:id/reservado", requireAuth, async (req, res) => {
   const { reservado } = req.body;
   if (reservado === undefined)
     return res.status(400).json({ message: "reservado requerido" });
-  const result = await svc.setReservado(req.params.id, reservado);
+  const result = await svc.setReservado(req.params.id, reservado, req.user.warehouse_id);
   return res.status(200).json(result);
 });
 

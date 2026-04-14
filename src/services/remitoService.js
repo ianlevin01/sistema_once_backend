@@ -99,8 +99,8 @@ export default class RemitoService {
     return { ...rows[0], items: itemsRes.rows };
   }
 
-  getAll({ from, to } = {}) {
-    return this.orderRepo.getAllByTipo("Remito", { from, to });
+  getAll({ from, to, warehouseName } = {}) {
+    return this.orderRepo.getAllByTipo("Remito", { from, to, warehouseName });
   }
 
   async delete(id) {

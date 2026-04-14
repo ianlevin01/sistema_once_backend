@@ -1,5 +1,6 @@
 import { Router } from "express";
 import RemitoService from "../services/remitoService.js";
+import { requireAuth } from "./authRoutes.js";
 
 const router = Router();
 const svc = new RemitoService();
@@ -25,9 +26,9 @@ router.get("/:id", async (req, res) => {
 });
 
 // Listar remitos
-router.get("/", async (req, res) => {
+router.get("/", requireAuth, async (req, res) => {
   const { from, to } = req.query;
-  const result = await svc.getAll({ from, to });
+  const result = await svc.getAll({ from, to, warehouseName: req.user.warehouse_name });
   return res.status(200).json(result);
 });
 

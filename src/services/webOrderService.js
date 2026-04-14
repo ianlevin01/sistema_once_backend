@@ -15,7 +15,7 @@ export default class WebOrderService {
   // SET RESERVADO
   // Cuando reservado pasa a TRUE → crea una Nota de Pedido automáticamente
   // ─────────────────────────────────────────────────────────────────────────
-  async setReservado(id, reservado) {
+  async setReservado(id, reservado, warehouseId = null) {
     const result = await this.repo.setReservado(id, reservado);
 
     if (reservado) {
@@ -38,6 +38,7 @@ export default class WebOrderService {
           await this.comproSvc.create({
             customer_id:    customerId,
             user_id:        null,
+            warehouse_id:   warehouseId,
             payment_method: "Contado",
             tipo:           "Nota de Pedido Web",
             vendedor:       null,
