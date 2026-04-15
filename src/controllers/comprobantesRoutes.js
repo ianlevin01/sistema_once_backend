@@ -50,12 +50,13 @@ router.put("/:id", async (req, res) => {
 // ── Listado agrupado para CajaListado ─────────────────────────
 router.get("/listado", requireAuth, async (req, res) => {
   const { from, to } = req.query;
+  const isSuperAdmin = req.user.role === "superadmin";
   try {
     const result = await svc.getListado({
       from,
       to,
-      warehouseId:   req.user.warehouse_id,
-      warehouseName: req.user.warehouse_name,
+      warehouseId:   isSuperAdmin ? null : req.user.warehouse_id,
+      warehouseName: isSuperAdmin ? null : req.user.warehouse_name,
     });
     return res.status(200).json(result);
   } catch (err) {
@@ -99,7 +100,8 @@ router.get("/:id", async (req, res) => {
 // ── Listado con filtros ───────────────────────────────────────
 router.get("/", requireAuth, async (req, res) => {
   const { from, to } = req.query;
-  const result = await svc.getAll({ from, to, warehouseId: req.user.warehouse_id });
+  const warehouseId = req.user.role === "superadmin" ? null : req.user.warehouse_id;
+  const result = await svc.getAll({ from, to, warehouseId });
   return res.status(200).json(result);
 });
 
