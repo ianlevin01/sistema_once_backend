@@ -844,8 +844,11 @@ export default class ComprobanteService {
       const notasWhFilter = warehouseId ? ` AND o.warehouse_id = $${notasParams.push(warehouseId)}` : "";
       const notasRes = await client.query(`
         SELECT o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
-               o.customer_id, c.name AS customer_name
-        FROM orders o LEFT JOIN customers c ON c.id = o.customer_id
+               o.customer_id, o.price_type, c.name AS customer_name,
+               pm.method AS payment_method
+        FROM orders o
+        LEFT JOIN customers c ON c.id = o.customer_id
+        LEFT JOIN payments pm ON pm.order_id = o.id
         WHERE o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
           AND o.created_at BETWEEN $1 AND $2
           ${notasWhFilter}
