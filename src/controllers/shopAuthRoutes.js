@@ -25,7 +25,7 @@ export function requireAuth(req, res, next) {
 }
 
 // ── POST /api/shop/register ───────────────────────────────────────────────────
-// Crea shop_user + customer en la misma transacción y los vincula
+// Crea solo el shop_user, sin tocar la tabla customers
 router.post("/register", async (req, res) => {
   const { email, password, name } = req.body;
 
@@ -35,47 +35,36 @@ router.post("/register", async (req, res) => {
     return res.status(400).json({ message: "La contraseña debe tener al menos 6 caracteres" });
 
   const normalizedEmail = email.toLowerCase().trim();
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
-    // Verificar que no exista ya
-    const exists = await client.query(
+    const exists = await pool.query(
       "SELECT id FROM public.shop_users WHERE email = $1",
       [normalizedEmail]
     );
-    if (exists.rows.length > 0) {
-      await client.query("ROLLBACK");
+    if (exists.rows.length > 0)
       return res.status(409).json({ message: "Ya existe una cuenta con ese email" });
-    }
 
-    // 1. Crear o reusar customer (puede que ya exista con ese email)
-    let customerId;
-    const existingCustomer = await client.query(
-      "SELECT id FROM public.customers WHERE LOWER(email) = $1 LIMIT 1",
+    // Crear o encontrar el customer asociado (type='web', sin CC)
+    let customerId = null;
+    const existingCust = await pool.query(
+      `SELECT id FROM public.customers WHERE email = $1 AND type = 'web' LIMIT 1`,
       [normalizedEmail]
     );
-    if (existingCustomer.rows.length > 0) {
-      customerId = existingCustomer.rows[0].id;
+    if (existingCust.rows[0]) {
+      customerId = existingCust.rows[0].id;
     } else {
-      const customerName = name?.trim() || normalizedEmail.split("@")[0];
-      const newCustomer  = await client.query(
-        `INSERT INTO public.customers (name, email, type)
-         VALUES ($1, $2, 'web') RETURNING id`,
-        [customerName, normalizedEmail]
+      const newCust = await pool.query(
+        `INSERT INTO public.customers (name, email, type) VALUES ($1, $2, 'web') RETURNING id`,
+        [name?.trim() || normalizedEmail, normalizedEmail]
       );
-      customerId = newCustomer.rows[0].id;
+      customerId = newCust.rows[0].id;
     }
 
-    // 2. Crear shop_user vinculado al customer
     const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
-    const result = await client.query(
+    const result = await pool.query(
       `INSERT INTO public.shop_users (email, password_hash, name, customer_id)
-       VALUES ($1, $2, $3, $4) RETURNING id, email, name, customer_id`,
+       VALUES ($1, $2, $3, $4) RETURNING id, email, name`,
       [normalizedEmail, password_hash, name?.trim() ?? null, customerId]
     );
-
-    await client.query("COMMIT");
 
     const user  = result.rows[0];
     const token = jwt.sign(
@@ -88,11 +77,8 @@ router.post("/register", async (req, res) => {
       user: { id: user.id, email: user.email, name: user.name },
     });
   } catch (err) {
-    await client.query("ROLLBACK");
     console.error("register error:", err);
     return res.status(500).json({ message: "Error interno" });
-  } finally {
-    client.release();
   }
 });
 

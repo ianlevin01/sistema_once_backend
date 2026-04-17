@@ -35,17 +35,21 @@ export default class WebOrderService {
 
         try {
           // Crear la Nota de Pedido (también suma stock_reserva automáticamente)
+          // Para guests (sin customer_id real) usar consumidor_final con su nombre
+          const esGuest = !customerId;
           await this.comproSvc.create({
-            customer_id:    customerId,
-            user_id:        null,
-            warehouse_id:   warehouseId,
-            payment_method: "Contado",
-            tipo:           "Nota de Pedido Web",
-            vendedor:       null,
-            price_type:     "precio_1",
-            texto_libre:    webOrder.observaciones || null,
-            escenario:      null,
-            web_order_id:   id,
+            customer_id:             esGuest ? null : customerId,
+            es_consumidor_final:     esGuest,
+            consumidor_final_nombre: esGuest ? (webOrder.customer_name || null) : null,
+            user_id:                 null,
+            warehouse_id:            warehouseId,
+            payment_method:          "Contado",
+            tipo:                    "Nota de Pedido Web",
+            vendedor:                null,
+            price_type:              "precio_1",
+            texto_libre:             webOrder.observaciones || null,
+            escenario:               null,
+            web_order_id:            id,
             items,
           });
         } catch (err) {
@@ -66,17 +70,10 @@ export default class WebOrderService {
     try {
       await client.query("BEGIN");
 
-      let customerId = data.customer_id || null;
-      let newCustomer = null;
+      const customerId = data.customer_id || null;
 
-      if (!customerId) {
-        if (!data.customer_name) throw new Error("Se requiere nombre del cliente");
-        newCustomer = await this.repo.createCustomer({
-          name:  data.customer_name,
-          email: data.customer_email,
-          phone: data.customer_phone,
-        }, client);
-        customerId = newCustomer.id;
+      if (!customerId && !data.customer_name) {
+        throw new Error("Se requiere nombre del cliente");
       }
 
       const total = (data.items || []).reduce(
@@ -84,22 +81,20 @@ export default class WebOrderService {
       );
 
       const order = await this.repo.create({
-        customer_id:   customerId,
-        observaciones: data.observaciones,
+        customer_id:    customerId,
+        customer_name:  data.customer_name  || null,
+        customer_email: data.customer_email || null,
+        customer_phone: data.customer_phone || null,
+        observaciones:  data.observaciones,
         total,
-        color:         data.color,
+        color:          data.color,
       }, client);
 
       await this.repo.replaceItems(order.id, data.items || [], client);
 
       await client.query("COMMIT");
 
-      const result = await this.repo.getById(order.id);
-
-      if (newCustomer) {
-        return { ...result, new_customer: newCustomer };
-      }
-      return result;
+      return await this.repo.getById(order.id);
 
     } catch (err) {
       await client.query("ROLLBACK");

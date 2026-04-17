@@ -7,9 +7,9 @@ export default class WebOrderRepository {
     const res = await pool.query(`
       SELECT
         w.*,
-        c.name     AS customer_name,
-        c.email    AS customer_email,
-        c.phone    AS customer_phone,
+        COALESCE(c.name,  w.customer_name)  AS customer_name,
+        COALESCE(c.email, w.customer_email) AS customer_email,
+        COALESCE(c.phone, w.customer_phone) AS customer_phone,
         COALESCE(
           (
             SELECT json_agg(
@@ -38,9 +38,9 @@ export default class WebOrderRepository {
     let query = `
       SELECT
         w.*,
-        c.name AS customer_name,
-        c.email AS customer_email,
-        c.phone AS customer_phone,
+        COALESCE(c.name,  w.customer_name)  AS customer_name,
+        COALESCE(c.email, w.customer_email) AS customer_email,
+        COALESCE(c.phone, w.customer_phone) AS customer_phone,
         COALESCE(
           (
             SELECT json_agg(
@@ -94,14 +94,18 @@ export default class WebOrderRepository {
   async create(data, client) {
     const db = client || pool;
     const res = await db.query(`
-      INSERT INTO web_orders (customer_id, observaciones, total, color)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO web_orders
+        (customer_id, customer_name, customer_email, customer_phone, observaciones, total, color)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
     `, [
-      data.customer_id,
-      data.observaciones || null,
-      data.total         || 0,
-      data.color         || 'pending',
+      data.customer_id    || null,
+      data.customer_name  || null,
+      data.customer_email || null,
+      data.customer_phone || null,
+      data.observaciones  || null,
+      data.total          || 0,
+      data.color          || 'pending',
     ]);
     return res.rows[0];
   }

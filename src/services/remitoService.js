@@ -41,8 +41,9 @@ export default class RemitoService {
       );
 
       const order = await this.orderRepo.create({
-        customer_id: data.customer_id || null,
-        user_id:     null,
+        customer_id:  data.customer_id  || null,
+        user_id:      data.user_id      || null,
+        warehouse_id: data.warehouse_id || null,
         total,
         profit:      0,
         status:      "remito",
@@ -99,8 +100,8 @@ export default class RemitoService {
     return { ...rows[0], items: itemsRes.rows };
   }
 
-  getAll({ from, to, warehouseName } = {}) {
-    return this.orderRepo.getAllByTipo("Remito", { from, to, warehouseName });
+  getAll({ from, to, warehouseId } = {}) {
+    return this.orderRepo.getAll({ from, to, warehouseId, tipo: "Remito" });
   }
 
   async delete(id) {

@@ -35,10 +35,9 @@ function convertir(monto, divisaOrigen, divisaDestino, cotizacion) {
 
 export default class CuentaCorrienteRepository {
 
-  // ── Obtener o crear cuenta corriente de un cliente ─────────
+  // ── Obtener cuenta corriente (sin auto-crear) ─────────────
   async getOrCreate(customerId, client) {
     const db = client || pool;
-
     const existing = await db.query(
       `SELECT cc.*, c.divisa AS customer_divisa
        FROM cuentas_corrientes cc
@@ -46,18 +45,26 @@ export default class CuentaCorrienteRepository {
        WHERE cc.customer_id = $1`,
       [customerId]
     );
+    return existing.rows[0] || null;
+  }
+
+  // ── Abrir cuenta corriente explícitamente ─────────────────
+  async createCC(customerId, client) {
+    const db = client || pool;
+    const existing = await db.query(
+      `SELECT * FROM cuentas_corrientes WHERE customer_id = $1`, [customerId]
+    );
     if (existing.rows[0]) return existing.rows[0];
 
-    // Obtener divisa del cliente
     const custRes = await db.query(
       `SELECT divisa FROM customers WHERE id = $1`, [customerId]
     );
+    if (!custRes.rows[0]) throw new Error("Cliente no encontrado");
     const divisa = custRes.rows[0]?.divisa ?? "ARS";
 
     const res = await db.query(
       `INSERT INTO cuentas_corrientes (customer_id, saldo, divisa)
-       VALUES ($1, 0, $2)
-       RETURNING *`,
+       VALUES ($1, 0, $2) RETURNING *`,
       [customerId, divisa]
     );
     return res.rows[0];
@@ -172,6 +179,7 @@ export default class CuentaCorrienteRepository {
 
     const cotizacion = await getCotizacion(db);
     const cuenta     = await this.getOrCreate(customerId, db);
+    if (!cuenta) return null; // cliente web: sin CC
     const divisa     = cuenta.divisa ?? "ARS";
 
     const montoEnCuenta = convertir(total, "ARS", divisa, cotizacion);
@@ -195,6 +203,7 @@ export default class CuentaCorrienteRepository {
     try {
       await client.query("BEGIN");
       const cuenta = await this.getOrCreate(customerId, client);
+      if (!cuenta) throw new Error("Este cliente no tiene cuenta corriente");
       const updated = await this.addMovimiento({
         cuentaId:      cuenta.id,
         tipo:          "pago",
@@ -243,12 +252,12 @@ export default class CuentaCorrienteRepository {
   // monto        = lo que el cliente pagó, en divisa_cobro
   // divisa_cobro = en qué moneda trajo la plata ('ARS' | 'USD')
   // La cuenta se acredita en su propia divisa (con conversión si hace falta)
-  async registrarCobranza(customerId, { monto, concepto, metodo_pago, divisa_cobro }) {
+  async registrarCobranza(customerId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      const cotizacion = await getCotizacion(client);
+      const cotizacion = cotizacion_manual != null ? cotizacion_manual : await getCotizacion(client);
 
       const custRes = await client.query(
         `SELECT name FROM customers WHERE id = $1`, [customerId]
@@ -256,6 +265,7 @@ export default class CuentaCorrienteRepository {
       const customerName = custRes.rows[0]?.name || "";
 
       const cuenta  = await this.getOrCreate(customerId, client);
+      if (!cuenta) throw new Error("Este cliente no tiene cuenta corriente");
       const divisa  = cuenta.divisa ?? "ARS";
       const divisaCobro = divisa_cobro ?? divisa;
 

@@ -82,7 +82,7 @@ export default class OrderRepository {
     return res.rows[0];
   }
 
-  async getAll({ from, to, warehouseId } = {}) {
+  async getAll({ from, to, warehouseId, tipo } = {}) {
     let query = `
       SELECT
         o.*,
@@ -97,6 +97,7 @@ export default class OrderRepository {
     `;
     const params = [];
 
+    if (tipo)        { params.push(tipo);                query += ` AND o.tipo = $${params.length}`; }
     if (from)        { params.push(`${from} 00:00:00`); query += ` AND o.created_at >= $${params.length}`; }
     if (to)          { params.push(`${to} 23:59:59`);   query += ` AND o.created_at <= $${params.length}`; }
     if (warehouseId) { params.push(warehouseId);         query += ` AND o.warehouse_id = $${params.length}`; }

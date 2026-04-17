@@ -20,10 +20,7 @@ router.get("/", async (req, res) => {
 router.get("/cliente/:customerId", async (req, res) => {
   try {
     const result = await svc.getByCustomer(req.params.customerId);
-    if (!result) {
-      const nueva = await svc.getOrCreate(req.params.customerId);
-      return res.status(200).json({ ...nueva, movimientos: [] });
-    }
+    if (!result) return res.status(404).json({ message: "Sin cuenta corriente" });
     return res.status(200).json(result);
   } catch (err) {
     console.error("Error en GET /cuenta-corriente/cliente/:id:", err);
@@ -64,17 +61,18 @@ router.post("/cliente/:customerId/saldo", async (req, res) => {
 
 // POST registrar cobranza
 router.post("/cliente/:customerId/cobranza", async (req, res) => {
-  const { monto, concepto, metodo_pago, divisa_cobro } = req.body;
+  const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual } = req.body;
   if (!monto || Number(monto) <= 0)
     return res.status(400).json({ message: "Monto inválido" });
   if (!metodo_pago)
     return res.status(400).json({ message: "Método de pago obligatorio" });
   try {
     const result = await svc.registrarCobranza(req.params.customerId, {
-      monto:       Number(monto),
-      concepto:    concepto || "Cobranza",
+      monto:            Number(monto),
+      concepto:         concepto || "Cobranza",
       metodo_pago,
-      divisa_cobro: divisa_cobro || null,
+      divisa_cobro:     divisa_cobro || null,
+      cotizacion_manual: cotizacion_manual ? Number(cotizacion_manual) : null,
     });
     return res.status(200).json(result);
   } catch (err) {

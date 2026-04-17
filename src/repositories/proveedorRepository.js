@@ -183,12 +183,12 @@ export default class ProveedorRepository {
   }
 
   // ── Registrar pago al proveedor (le pagamos lo que le debemos) ─
-  async registrarPago(proveedorId, { monto, concepto, metodo_pago, divisa_cobro }) {
+  async registrarPago(proveedorId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      const cotizacion  = await getCotizacion(client);
+      const cotizacion  = cotizacion_manual != null ? cotizacion_manual : await getCotizacion(client);
       const cc          = await this.getOrCreateCC(proveedorId, client);
       const divisa      = cc.divisa ?? "ARS";
       const divisaCobro = divisa_cobro ?? divisa;
@@ -243,12 +243,12 @@ export default class ProveedorRepository {
   }
 
   // ── Registrar cobranza del proveedor (nos devuelve dinero) ─────
-  async registrarCobranza(proveedorId, { monto, concepto, metodo_pago, divisa_cobro }) {
+  async registrarCobranza(proveedorId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      const cotizacion  = await getCotizacion(client);
+      const cotizacion  = cotizacion_manual != null ? cotizacion_manual : await getCotizacion(client);
       const cc          = await this.getOrCreateCC(proveedorId, client);
       const divisa      = cc.divisa ?? "ARS";
       const divisaCobro = divisa_cobro ?? divisa;

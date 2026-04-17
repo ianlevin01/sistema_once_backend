@@ -1,11 +1,29 @@
 import pool from "../database/db.js"
 
 export default class CustomerRepository {
-  async searchByName(name) {
-    const res = await pool.query(
-      "SELECT * FROM customers WHERE name ILIKE $1",
-      [`%${name}%`]
-    );
+  async searchByName(name, conCC = false) {
+    const query = conCC
+      ? `SELECT c.*, TRUE AS tiene_cc
+         FROM customers c
+         INNER JOIN cuentas_corrientes cc ON cc.customer_id = c.id
+         WHERE c.name ILIKE $1 OR c.document ILIKE $1
+         ORDER BY c.name LIMIT 30`
+      : `SELECT c.*, EXISTS(SELECT 1 FROM cuentas_corrientes cc WHERE cc.customer_id = c.id) AS tiene_cc
+         FROM customers c
+         WHERE c.name ILIKE $1 OR c.document ILIKE $1
+         ORDER BY c.name LIMIT 30`;
+    const res = await pool.query(query, [`%${name}%`]);
+    return res.rows;
+  }
+
+  async getAll() {
+    const res = await pool.query(`
+      SELECT c.*,
+        EXISTS(SELECT 1 FROM cuentas_corrientes cc WHERE cc.customer_id = c.id) AS tiene_cc
+      FROM customers c
+      WHERE c.type IS DISTINCT FROM 'web'
+      ORDER BY c.name ASC
+    `);
     return res.rows;
   }
 

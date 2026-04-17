@@ -628,34 +628,26 @@ export default class ComprobanteService {
       // ── Revertir CC cliente ─────────────────────────────────
       if (esCuentaCorriente && order.customer_id && !order.es_consumidor_final) {
         if (esPresupuesto || esDevolucion) {
-          const cc            = await this.ccRepo.getOrCreate(order.customer_id, client);
-          const divisaCC      = cc.divisa ?? "ARS";
-          const montoEnCuenta = divisaCC === "USD" ? totalARS / cotizacion : totalARS;
-
-          let tipoMov, saldoDelta;
-          if (esPresupuesto) {
-            // Presupuesto debitó (sumó deuda) → al eliminar acreditamos (restamos deuda)
-            tipoMov    = "pago";
-            saldoDelta = -montoEnCuenta;
-          } else {
-            // Devolución acreditó (restó deuda) → al eliminar debitamos (sumamos deuda)
-            tipoMov    = "debito";
-            saldoDelta = montoEnCuenta;
+          const cc = await this.ccRepo.getOrCreate(order.customer_id, client);
+          if (cc) {
+            // Eliminar el movimiento original y revertir su efecto en el saldo.
+            // Presupuesto creó un 'debito'; devolución creó un 'pago'.
+            const tipoOriginal = esPresupuesto ? "debito" : "pago";
+            const movsRes = await client.query(
+              `SELECT id, monto FROM cc_movimientos
+               WHERE order_id = $1 AND tipo = $2 AND cuenta_corriente_id = $3`,
+              [id, tipoOriginal, cc.id]
+            );
+            for (const mov of movsRes.rows) {
+              // Revertir: debito restaba saldo → al eliminar sumar; pago sumaba → restar
+              const saldoDelta = esPresupuesto ? -Number(mov.monto) : Number(mov.monto);
+              await client.query(
+                `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+                [saldoDelta, cc.id]
+              );
+              await client.query(`DELETE FROM cc_movimientos WHERE id = $1`, [mov.id]);
+            }
           }
-
-          await client.query(
-            `INSERT INTO cc_movimientos
-               (cuenta_corriente_id, tipo, concepto, monto, order_id,
-                divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-            [cc.id, tipoMov, `Anulación — ${id.slice(0,8)}`,
-             montoEnCuenta, id, divisaCC, "ARS", totalARS,
-             divisaCC === "USD" ? cotizacion : null]
-          );
-          await client.query(
-            `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
-            [saldoDelta, cc.id]
-          );
         }
       }
 

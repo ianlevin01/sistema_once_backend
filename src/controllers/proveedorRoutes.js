@@ -87,16 +87,17 @@ router.get("/:id/cuenta-corriente", async (req, res) => {
 // ── Registrar pago al proveedor ───────────────────────────────
 // Reduce el saldo a favor (le pagamos lo que le debemos)
 router.post("/:id/pago", async (req, res) => {
-  const { monto, concepto, metodo_pago, divisa_cobro } = req.body; // ← agregar divisa_cobro
+  const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual } = req.body;
   if (!monto || Number(monto) <= 0) {
     return res.status(400).json({ message: "Monto inválido" });
   }
   try {
     const result = await repo.registrarPago(req.params.id, {
-      monto:        Number(monto),
-      concepto:     concepto || "Pago a proveedor",
+      monto:             Number(monto),
+      concepto:          concepto || "Pago a proveedor",
       metodo_pago,
-      divisa_cobro, // ← pasar al repo
+      divisa_cobro,
+      cotizacion_manual: cotizacion_manual ? Number(cotizacion_manual) : null,
     });
     return res.status(200).json(result);
   } catch (err) {
@@ -108,16 +109,17 @@ router.post("/:id/pago", async (req, res) => {
 // ── Registrar cobranza del proveedor ─────────────────────────
 // También reduce el saldo a favor (nos devuelve dinero / nota de crédito)
 router.post("/:id/cobranza", async (req, res) => {
-  const { monto, concepto, metodo_pago, divisa_cobro } = req.body; // ← agregar divisa_cobro
+  const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual } = req.body;
   if (!monto || Number(monto) <= 0) {
     return res.status(400).json({ message: "Monto inválido" });
   }
   try {
     const result = await repo.registrarCobranza(req.params.id, {
-      monto:        Number(monto),
-      concepto:     concepto || "Cobranza proveedor",
+      monto:             Number(monto),
+      concepto:          concepto || "Cobranza proveedor",
       metodo_pago,
-      divisa_cobro, // ← pasar al repo
+      divisa_cobro,
+      cotizacion_manual: cotizacion_manual ? Number(cotizacion_manual) : null,
     });
     return res.status(200).json(result);
   } catch (err) {

@@ -6,14 +6,18 @@ const router = Router();
 const svc = new RemitoService();
 
 // Crear remito
-router.post("/", async (req, res) => {
-  const { origen, destino, user_id, price_type, items } = req.body;
+router.post("/", requireAuth, async (req, res) => {
+  const { origen, destino, items } = req.body;
 
   if (!origen || !destino || !items) {
     return res.status(400).json({ message: "Datos incompletos" });
   }
 
-  const result = await svc.createRemito(req.body);
+  const result = await svc.createRemito({
+    ...req.body,
+    user_id:      req.user.id,
+    warehouse_id: req.user.warehouse_id || null,
+  });
   return res.status(201).json(result);
 });
 
@@ -28,7 +32,8 @@ router.get("/:id", async (req, res) => {
 // Listar remitos
 router.get("/", requireAuth, async (req, res) => {
   const { from, to } = req.query;
-  const result = await svc.getAll({ from, to, warehouseName: req.user.warehouse_name });
+  const warehouseId = req.user.role === "superadmin" ? null : req.user.warehouse_id;
+  const result = await svc.getAll({ from, to, warehouseId });
   return res.status(200).json(result);
 });
 

@@ -14,8 +14,10 @@ router.get("/", async (req, res) => {
       t.domicilio    AS transporte_domicilio,
       t.telefono     AS transporte_telefono,
       t.email        AS transporte_email,
-      c.document     AS customer_document,
-      c.condicion_iva AS customer_condicion_iva
+      c.document      AS customer_document,
+      c.condicion_iva AS customer_condicion_iva,
+      c.domicilio     AS customer_domicilio,
+      c.localidad     AS customer_localidad
     FROM transport_remitos tr
     LEFT JOIN transportes t ON t.id = tr.transporte_id
     LEFT JOIN customers   c ON c.id = tr.customer_id
