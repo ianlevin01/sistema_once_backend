@@ -178,14 +178,21 @@ export default class WebOrderRepository {
     }
   }
 
-  // ── Crear customer nuevo ───────────────────────────────────
-  async createCustomer(data, client) {
+  // ── Buscar o crear customer para pedido web ───────────────────
+  async findOrCreateCustomer({ name, email, phone, localidad }, client) {
     const db = client || pool;
+    if (email) {
+      const existing = await db.query(
+        `SELECT * FROM customers WHERE email = $1 LIMIT 1`,
+        [email]
+      );
+      if (existing.rows[0]) return existing.rows[0];
+    }
     const res = await db.query(
-      `INSERT INTO customers (name, email, phone, type)
-       VALUES ($1, $2, $3, 'web')
+      `INSERT INTO customers (name, email, phone, localidad, type)
+       VALUES ($1, $2, $3, $4, 'web')
        RETURNING *`,
-      [data.name, data.email || null, data.phone || null]
+      [name, email || null, phone || null, localidad || null]
     );
     return res.rows[0];
   }

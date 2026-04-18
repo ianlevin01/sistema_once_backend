@@ -37,6 +37,21 @@ router.get("/", requireAuth, async (req, res) => {
   return res.status(200).json(result);
 });
 
+// Actualizar remito
+router.put("/:id", requireAuth, async (req, res) => {
+  const { origen, destino, items } = req.body;
+  if (!origen || !destino || !items) {
+    return res.status(400).json({ message: "Datos incompletos" });
+  }
+  try {
+    const result = await svc.updateRemito(req.params.id, req.body);
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("Error actualizando remito:", err);
+    return res.status(500).json({ message: err.message });
+  }
+});
+
 // Eliminar remito
 router.delete("/:id", async (req, res) => {
   try {

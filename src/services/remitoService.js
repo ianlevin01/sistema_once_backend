@@ -104,6 +104,67 @@ export default class RemitoService {
     return this.orderRepo.getAll({ from, to, warehouseId, tipo: "Remito" });
   }
 
+  async updateRemito(id, data) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. Cargar estado actual para revertir stock
+      const oldOrderRes = await client.query(
+        `SELECT origen, destino FROM orders WHERE id = $1`, [id]
+      );
+      const oldOrder = oldOrderRes.rows[0];
+      if (!oldOrder) throw new Error("Remito no encontrado");
+
+      const oldItemsRes = await client.query(
+        `SELECT product_id, quantity FROM order_items WHERE order_id = $1`, [id]
+      );
+
+      // 2. Revertir stock de la versión anterior
+      const oldOrigenId  = oldOrder.origen  ? await this.#findWarehouseId(client, oldOrder.origen)  : null;
+      const oldDestinoId = oldOrder.destino ? await this.#findWarehouseId(client, oldOrder.destino) : null;
+
+      for (const item of oldItemsRes.rows) {
+        if (!item.product_id) continue;
+        if (oldOrigenId)  await this.#adjustStock(client, item.product_id, oldOrigenId,   item.quantity);
+        if (oldDestinoId) await this.#adjustStock(client, item.product_id, oldDestinoId, -item.quantity);
+      }
+
+      // 3. Actualizar metadata del remito
+      const newTotal = (data.items || []).reduce(
+        (acc, i) => acc + (i.unit_price || 0) * i.quantity, 0
+      );
+      await client.query(
+        `UPDATE orders SET origen=$1, destino=$2, customer_id=$3, price_type=$4, total=$5 WHERE id=$6`,
+        [data.origen || null, data.destino || null, data.customer_id || null, data.price_type || "precio_1", newTotal, id]
+      );
+
+      // 4. Reemplazar items
+      await client.query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
+      for (const item of data.items || []) {
+        await this.itemRepo.create(item, id, client);
+      }
+
+      // 5. Aplicar nuevo stock
+      const newOrigenId  = data.origen  ? await this.#findWarehouseId(client, data.origen)  : null;
+      const newDestinoId = data.destino ? await this.#findWarehouseId(client, data.destino) : null;
+
+      for (const item of data.items || []) {
+        if (!item.product_id) continue;
+        if (newOrigenId)  await this.#adjustStock(client, item.product_id, newOrigenId,  -item.quantity);
+        if (newDestinoId) await this.#adjustStock(client, item.product_id, newDestinoId,  item.quantity);
+      }
+
+      await client.query("COMMIT");
+      return this.getById(id);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async delete(id) {
     const client = await pool.connect();
     try {

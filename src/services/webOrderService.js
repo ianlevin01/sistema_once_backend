@@ -70,10 +70,21 @@ export default class WebOrderService {
     try {
       await client.query("BEGIN");
 
-      const customerId = data.customer_id || null;
+      let customerId = data.customer_id || null;
 
       if (!customerId && !data.customer_name) {
         throw new Error("Se requiere nombre del cliente");
+      }
+
+      // Para pedidos de invitados, crear (o encontrar) el cliente en la BD
+      if (!customerId && data.customer_name) {
+        const customer = await this.repo.findOrCreateCustomer({
+          name:      data.customer_name,
+          email:     data.customer_email     || null,
+          phone:     data.customer_phone     || null,
+          localidad: data.customer_locality  || null,
+        }, client);
+        customerId = customer.id;
       }
 
       const total = (data.items || []).reduce(
@@ -82,9 +93,9 @@ export default class WebOrderService {
 
       const order = await this.repo.create({
         customer_id:    customerId,
-        customer_name:  data.customer_name  || null,
-        customer_email: data.customer_email || null,
-        customer_phone: data.customer_phone || null,
+        customer_name:  null,
+        customer_email: null,
+        customer_phone: null,
         observaciones:  data.observaciones,
         total,
         color:          data.color,
