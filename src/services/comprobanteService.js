@@ -47,17 +47,20 @@ export default class ComprobanteService {
       const esNota         = tipoFinal === "Nota de Pedido" || tipoFinal === "Nota de Pedido Web";
 
       // ── Warehouse ───────────────────────────────────────────
+      // warehouseId  → se guarda en orders.warehouse_id (warehouse del creador → filtrado/visibilidad)
+      // stockWarehouseId → donde realmente se mueve el stock (destino para repos, origen para devolProv)
       let warehouseId = null;
-      if (esReposicion || esDevolProv) {
-        warehouseId = data.warehouse_id || null;
-      } else if (data.user_id) {
+      if (data.user_id) {
         const userRes = await client.query(
           `SELECT warehouse_id FROM users WHERE id = $1`, [data.user_id]
         );
         warehouseId = userRes.rows[0]?.warehouse_id || null;
-      } else {
-        warehouseId = data.warehouse_id || null;
       }
+      if (!warehouseId) warehouseId = data.warehouse_id || null;
+
+      const stockWarehouseId = (esReposicion || esDevolProv)
+        ? (data.destino_warehouse_id || null)
+        : warehouseId;
 
       // ── Divisa ──────────────────────────────────────────────
       let divisa = "ARS";
@@ -87,12 +90,14 @@ export default class ComprobanteService {
         : totalARS;
 
       // ── Crear orden ─────────────────────────────────────────
+      // Para repos/devolProv: destino guarda el stockWarehouseId (UUID) para
+      // que edit/delete sepan dónde revertir el stock sin tocar warehouse_id.
       const order = await client.query(`
         INSERT INTO orders (
           customer_id, supplier_id, user_id, warehouse_id,
           total, profit, status, tipo, vendedor, price_type, texto_libre,
-          es_consumidor_final, consumidor_final_nombre, divisa
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          es_consumidor_final, consumidor_final_nombre, divisa, destino
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         RETURNING *
       `, [
         data.customer_id  || null,
@@ -107,6 +112,7 @@ export default class ComprobanteService {
         data.es_consumidor_final     ? true  : false,
         data.consumidor_final_nombre || null,
         divisa,
+        (esReposicion || esDevolProv) ? (stockWarehouseId || null) : null,
       ]);
       const orderRow = order.rows[0];
 
@@ -224,8 +230,8 @@ export default class ComprobanteService {
         }
       }
 
-      // ── Reposición → sumar stock ────────────────────────────
-      if (esReposicion && warehouseId) {
+      // ── Reposición → sumar stock en el depósito DESTINO ────────
+      if (esReposicion && stockWarehouseId) {
         for (const item of data.items) {
           if (!item.product_id) continue;
           await client.query(
@@ -233,13 +239,12 @@ export default class ComprobanteService {
              VALUES ($1, $2, $3)
              ON CONFLICT (product_id, warehouse_id)
              DO UPDATE SET quantity = stock.quantity + EXCLUDED.quantity`,
-            [item.product_id, warehouseId, item.quantity]
+            [item.product_id, stockWarehouseId, item.quantity]
           );
         }
       }
 
       // ── Reposición → acreditar CC proveedor ─────────────────
-      // acreditarReposicion espera el monto en ARS y hace la conversión internamente
       if (esReposicion && data.supplier_id && totalARS > 0) {
         await this.proveedorRepo.acreditarReposicion(
           data.supplier_id, { monto: totalARS, orderId: orderRow.id }, client
@@ -247,7 +252,6 @@ export default class ComprobanteService {
       }
 
       // ── Devolución → sumar stock al warehouse ───────────────
-      // Alguien devuelve mercadería → entra al depósito
       if (esDevolucion && warehouseId) {
         for (const item of data.items) {
           if (!item.product_id) continue;
@@ -260,7 +264,6 @@ export default class ComprobanteService {
           );
         }
       }
-      // Sin warehouse: devolver al pool general
       if (esDevolucion && !warehouseId) {
         for (const item of data.items) {
           if (!item.product_id) continue;
@@ -268,19 +271,18 @@ export default class ComprobanteService {
         }
       }
 
-      // ── Devol a proveedor → restar stock + debitar CC prov ──
-      // Le devolvemos mercadería al proveedor → sale del depósito
-      if (esDevolProv && warehouseId) {
+      // ── Devol a proveedor → restar stock del depósito ORIGEN ──
+      if (esDevolProv && stockWarehouseId) {
         for (const item of data.items) {
           if (!item.product_id) continue;
           await client.query(
             `UPDATE stock SET quantity = quantity - $1
              WHERE product_id = $2 AND warehouse_id = $3`,
-            [item.quantity, item.product_id, warehouseId]
+            [item.quantity, item.product_id, stockWarehouseId]
           );
         }
       }
-      if (esDevolProv && !warehouseId) {
+      if (esDevolProv && !stockWarehouseId) {
         for (const item of data.items) {
           if (!item.product_id) continue;
           await this._deductStock(client, item.product_id, item.quantity, null);
@@ -335,13 +337,17 @@ export default class ComprobanteService {
       const order = orderRes.rows[0];
       if (!order) throw new Error("Comprobante no encontrado");
 
-      const tipo         = order.tipo;
-      const warehouseId  = order.warehouse_id;
-      const esPresupuesto = tipo === "Presupuesto" || tipo === "Presupuesto Web";
-      const esNota        = tipo === "Nota de Pedido" || tipo === "Nota de Pedido Web";
-      const esReposicion  = tipo === "Reposicion";
-      const esDevolucion  = tipo === "Devolucion";
-      const esDevolProv   = tipo === "Devol a proveedor";
+      const tipo            = order.tipo;
+      const warehouseId     = order.warehouse_id;
+      const esPresupuesto   = tipo === "Presupuesto" || tipo === "Presupuesto Web";
+      const esNota          = tipo === "Nota de Pedido" || tipo === "Nota de Pedido Web";
+      const esReposicion    = tipo === "Reposicion";
+      const esDevolucion    = tipo === "Devolucion";
+      const esDevolProv     = tipo === "Devol a proveedor";
+      // Para repos/devolProv el stock vive en el warehouse guardado en `destino`
+      const stockWarehouseId = (esReposicion || esDevolProv)
+        ? (order.destino || order.warehouse_id)
+        : warehouseId;
 
       const oldItemsRes = await client.query(
         `SELECT oi.*, p.name, p.code FROM order_items oi
@@ -369,7 +375,6 @@ export default class ComprobanteService {
         if (delta === 0) continue;
 
         if (esPresupuesto) {
-          // más items → restar más stock; menos items → devolver stock
           if (delta > 0) await this._deductStock(client, productId, delta, warehouseId);
           else           await this._returnStock(client, productId, -delta, warehouseId);
         } else if (esNota) {
@@ -378,16 +383,15 @@ export default class ComprobanteService {
             [delta, productId]
           );
         } else if (esReposicion) {
-          if (warehouseId) {
+          if (stockWarehouseId) {
             await client.query(
               `INSERT INTO stock (product_id, warehouse_id, quantity) VALUES ($1,$2,$3)
                ON CONFLICT (product_id, warehouse_id)
                DO UPDATE SET quantity = stock.quantity + EXCLUDED.quantity`,
-              [productId, warehouseId, delta]
+              [productId, stockWarehouseId, delta]
             );
           }
         } else if (esDevolucion) {
-          // más items devueltos → más stock; menos → menos stock
           if (warehouseId) {
             await client.query(
               `INSERT INTO stock (product_id, warehouse_id, quantity) VALUES ($1,$2,$3)
@@ -400,12 +404,11 @@ export default class ComprobanteService {
             else           await this._deductStock(client, productId, -delta, null);
           }
         } else if (esDevolProv) {
-          // más devuelto al proveedor → más stock sale; menos → vuelve
-          if (warehouseId) {
+          if (stockWarehouseId) {
             await client.query(
               `UPDATE stock SET quantity = quantity - $1
                WHERE product_id = $2 AND warehouse_id = $3`,
-              [delta, productId, warehouseId]
+              [delta, productId, stockWarehouseId]
             );
           }
         }
@@ -550,13 +553,16 @@ export default class ComprobanteService {
       const order = orderRes.rows[0];
       if (!order) throw new Error("Comprobante no encontrado");
 
-      const tipo          = order.tipo;
-      const warehouseId   = order.warehouse_id;
-      const esPresupuesto = tipo === "Presupuesto" || tipo === "Presupuesto Web";
-      const esNota        = tipo === "Nota de Pedido" || tipo === "Nota de Pedido Web";
-      const esReposicion  = tipo === "Reposicion";
-      const esDevolucion  = tipo === "Devolucion";
-      const esDevolProv   = tipo === "Devol a proveedor";
+      const tipo            = order.tipo;
+      const warehouseId     = order.warehouse_id;
+      const esPresupuesto   = tipo === "Presupuesto" || tipo === "Presupuesto Web";
+      const esNota          = tipo === "Nota de Pedido" || tipo === "Nota de Pedido Web";
+      const esReposicion    = tipo === "Reposicion";
+      const esDevolucion    = tipo === "Devolucion";
+      const esDevolProv     = tipo === "Devol a proveedor";
+      const stockWarehouseId = (esReposicion || esDevolProv)
+        ? (order.destino || order.warehouse_id)
+        : warehouseId;
 
       const itemsRes = await client.query(
         `SELECT product_id, quantity FROM order_items WHERE order_id = $1`, [id]
@@ -578,23 +584,20 @@ export default class ComprobanteService {
         if (!item.product_id) continue;
 
         if (esPresupuesto) {
-          // Presupuesto restó → devolver
           await this._returnStock(client, item.product_id, item.quantity, warehouseId);
         } else if (esNota) {
-          // Nota sumó reserva → restar
           await client.query(
             `UPDATE products SET stock_reserva = GREATEST(0, stock_reserva - $1) WHERE id = $2`,
             [item.quantity, item.product_id]
           );
-        } else if (esReposicion && warehouseId) {
-          // Reposición sumó → restar
+        } else if (esReposicion && stockWarehouseId) {
+          // Reposición sumó stock en destino → restar del destino
           await client.query(
             `UPDATE stock SET quantity = quantity - $1
              WHERE product_id = $2 AND warehouse_id = $3`,
-            [item.quantity, item.product_id, warehouseId]
+            [item.quantity, item.product_id, stockWarehouseId]
           );
         } else if (esDevolucion) {
-          // Devolución sumó stock → restar
           if (warehouseId) {
             await client.query(
               `UPDATE stock SET quantity = quantity - $1
@@ -605,13 +608,13 @@ export default class ComprobanteService {
             await this._deductStock(client, item.product_id, item.quantity, null);
           }
         } else if (esDevolProv) {
-          // Devol a proveedor restó stock → devolver
-          if (warehouseId) {
+          // Devol a proveedor restó stock del origen → devolver al origen
+          if (stockWarehouseId) {
             await client.query(
               `INSERT INTO stock (product_id, warehouse_id, quantity) VALUES ($1,$2,$3)
                ON CONFLICT (product_id, warehouse_id)
                DO UPDATE SET quantity = stock.quantity + EXCLUDED.quantity`,
-              [item.product_id, warehouseId, item.quantity]
+              [item.product_id, stockWarehouseId, item.quantity]
             );
           } else {
             await this._returnStock(client, item.product_id, item.quantity, null);
@@ -860,8 +863,8 @@ export default class ComprobanteService {
 
       // ── Remitos ──────────────────────────────────────────────
       const remitosParams = [dateFrom, dateTo];
-      const remitosWhFilter = warehouseName
-        ? ` AND (o.origen = $${remitosParams.push(warehouseName)} OR o.destino = $${remitosParams.length})`
+      const remitosWhFilter = warehouseId
+        ? ` AND o.warehouse_id = $${remitosParams.push(warehouseId)}`
         : "";
       const remitosRes = await client.query(`
         SELECT o.id, o.created_at, o.total, o.vendedor, o.origen, o.destino

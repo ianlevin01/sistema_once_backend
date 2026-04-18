@@ -20,7 +20,7 @@ export default class ProductRepository {
         ) AS stock
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
-      WHERE p.name ILIKE $1
+      WHERE (p.name ILIKE $1 OR p.code ILIKE $1)
       ORDER BY p.name
     `, [`%${name || ""}%`]);
     return res.rows;

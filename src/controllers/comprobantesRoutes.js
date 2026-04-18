@@ -10,12 +10,14 @@ const svc    = new ComprobanteService();
 router.post("/", async (req, res) => {
   const { items } = req.body;
   const esReposicion      = req.body.tipo === "Reposicion";
+  const esDevolProv       = req.body.tipo === "Devol a proveedor";
+  const esOperProv        = esReposicion || esDevolProv;
   const esConsumidorFinal = !!req.body.es_consumidor_final;
 
-  if (esReposicion && !req.body.supplier_id) {
-    return res.status(400).json({ message: "Datos incompletos: falta supplier_id para Reposicion" });
+  if (esOperProv && !req.body.supplier_id) {
+    return res.status(400).json({ message: "Datos incompletos: falta supplier_id" });
   }
-  if (!esReposicion && !esConsumidorFinal && !req.body.customer_id) {
+  if (!esOperProv && !esConsumidorFinal && !req.body.customer_id) {
     return res.status(400).json({ message: "Datos incompletos: falta customer_id" });
   }
   if (!req.body.payment_method || !items?.length) {
