@@ -1,16 +1,17 @@
 import nodemailer from 'nodemailer';
 
-const transporter = nodemailer.createTransport({
-  host:   process.env.SMTP_HOST,
-  port:   parseInt(process.env.SMTP_PORT || '587'),
-  secure: process.env.SMTP_SECURE === 'true',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+function getTransporter() {
+  return nodemailer.createTransport({
+    host:   process.env.SMTP_HOST,
+    port:   parseInt(process.env.SMTP_PORT || '587'),
+    secure: process.env.SMTP_SECURE === 'true',
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+}
 
-const FROM = `"Oncepuntos" <${process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@oncepuntos.com'}>`;
+function getFrom() {
+  return `"Oncepuntos" <${process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@oncepuntos.com'}>`;
+}
 
 function itemsTable(items) {
   if (!items?.length) return '';
@@ -67,8 +68,8 @@ export async function sendOrderPreparationEmail({ to, customerName, orderId, ite
     <p style="font-size:14px;color:#6b7280;margin:0;">¡Gracias por tu compra en Oncepuntos!</p>
   `);
   try {
-    await transporter.sendMail({
-      from: FROM,
+    await getTransporter().sendMail({
+      from: getFrom(),
       to,
       subject: `🔧 Tu pedido #${shortId} está en preparación — Oncepuntos`,
       html,
@@ -93,8 +94,8 @@ export async function sendOrderCompletedEmail({ to, customerName, orderId, items
     <p style="font-size:14px;color:#6b7280;margin:0;">Esperamos verte de nuevo pronto.</p>
   `);
   try {
-    await transporter.sendMail({
-      from: FROM,
+    await getTransporter().sendMail({
+      from: getFrom(),
       to,
       subject: `✅ Tu pedido #${shortId} fue completado — Oncepuntos`,
       html,
