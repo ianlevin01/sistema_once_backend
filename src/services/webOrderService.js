@@ -1,6 +1,7 @@
 import pool from "../database/db.js";
 import WebOrderRepository from "../repositories/webOrderRepository.js";
 import ComprobanteService from "./comprobanteService.js";
+import { sendOrderPreparationEmail } from "./emailService.js";
 
 export default class WebOrderService {
   repo        = new WebOrderRepository();
@@ -34,8 +35,6 @@ export default class WebOrderService {
         }));
 
         try {
-          // Crear la Nota de Pedido (también suma stock_reserva automáticamente)
-          // Para guests (sin customer_id real) usar consumidor_final con su nombre
           const esGuest = !customerId;
           await this.comproSvc.create({
             customer_id:             esGuest ? null : customerId,
@@ -52,9 +51,20 @@ export default class WebOrderService {
             web_order_id:            id,
             items,
           });
+          // Enviar email "en preparación"
+          const emailTo   = webOrder.customer_email;
+          const emailName = webOrder.customer_name;
+          if (emailTo) {
+            sendOrderPreparationEmail({
+              to:           emailTo,
+              customerName: emailName,
+              orderId:      id,
+              items:        webOrder.items,
+              total:        webOrder.total,
+            }).catch(() => {});
+          }
         } catch (err) {
           console.error("Error creando Nota de Pedido desde pedido web:", err);
-          // No propagar: el reservado ya se marcó, solo loguear el error
         }
       }
     }

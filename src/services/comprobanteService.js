@@ -1,4 +1,5 @@
 import pool from "../database/db.js";
+import { sendOrderCompletedEmail } from "./emailService.js";
 import OrderRepository from "../repositories/orderRepository.js";
 import OrderItemRepository from "../repositories/orderItemRepository.js";
 import PaymentRepository from "../repositories/paymentRepository.js";
@@ -163,11 +164,24 @@ export default class ComprobanteService {
       }
 
       // ── Web order ───────────────────────────────────────────
+      let _completionEmail = null;
       if (data.web_order_id) {
         await client.query(
           `UPDATE web_orders SET order_id = $1, updated_at = now() WHERE id = $2`,
           [orderRow.id, data.web_order_id]
         );
+        if (esPresupuesto) {
+          const woRes = await client.query(
+            `SELECT COALESCE(c.email, w.customer_email) AS email,
+                    COALESCE(c.name,  w.customer_name)  AS name,
+                    w.total, w.id
+             FROM web_orders w
+             LEFT JOIN customers c ON c.id = w.customer_id
+             WHERE w.id = $1`,
+            [data.web_order_id]
+          );
+          _completionEmail = woRes.rows[0] || null;
+        }
       }
 
       // ── Nota → Presupuesto: descontar stock ─────────────────
@@ -314,6 +328,16 @@ export default class ComprobanteService {
       }
 
       await client.query("COMMIT");
+
+      if (_completionEmail?.email) {
+        sendOrderCompletedEmail({
+          to:           _completionEmail.email,
+          customerName: _completionEmail.name,
+          orderId:      _completionEmail.id,
+          total:        _completionEmail.total,
+        }).catch(() => {});
+      }
+
       return orderRow;
     } catch (err) {
       await client.query("ROLLBACK");

@@ -25,9 +25,8 @@ export function requireAuth(req, res, next) {
 }
 
 // ── POST /api/shop/register ───────────────────────────────────────────────────
-// Crea solo el shop_user, sin tocar la tabla customers
 router.post("/register", async (req, res) => {
-  const { email, password, name } = req.body;
+  const { email, password, name, phone, direccion, transporte, localidad, codigoPostal } = req.body;
 
   if (!email || !password)
     return res.status(400).json({ message: "Email y contraseña requeridos" });
@@ -43,18 +42,29 @@ router.post("/register", async (req, res) => {
     if (exists.rows.length > 0)
       return res.status(409).json({ message: "Ya existe una cuenta con ese email" });
 
-    // Crear o encontrar el customer asociado (type='web', sin CC)
     let customerId = null;
     const existingCust = await pool.query(
-      `SELECT id FROM public.customers WHERE email = $1 AND type = 'web' LIMIT 1`,
+      `SELECT id FROM public.customers WHERE email = $1 LIMIT 1`,
       [normalizedEmail]
     );
     if (existingCust.rows[0]) {
       customerId = existingCust.rows[0].id;
+      await pool.query(
+        `UPDATE public.customers SET
+           name         = COALESCE($1, name),
+           phone        = COALESCE($2, phone),
+           domicilio    = COALESCE($3, domicilio),
+           transporte   = COALESCE($4, transporte),
+           localidad    = COALESCE($5, localidad),
+           codigo_postal = COALESCE($6, codigo_postal)
+         WHERE id = $7`,
+        [name?.trim() || null, phone || null, direccion || null, transporte || null, localidad || null, codigoPostal || null, customerId]
+      );
     } else {
       const newCust = await pool.query(
-        `INSERT INTO public.customers (name, email, type) VALUES ($1, $2, 'web') RETURNING id`,
-        [name?.trim() || normalizedEmail, normalizedEmail]
+        `INSERT INTO public.customers (name, email, type, phone, domicilio, transporte, localidad, codigo_postal)
+         VALUES ($1, $2, 'web', $3, $4, $5, $6, $7) RETURNING id`,
+        [name?.trim() || normalizedEmail, normalizedEmail, phone || null, direccion || null, transporte || null, localidad || null, codigoPostal || null]
       );
       customerId = newCust.rows[0].id;
     }
@@ -185,7 +195,11 @@ router.get("/orders", requireAuth, async (req, res) => {
     const result = await pool.query(
       `SELECT
          w.id, w.total, w.created_at,
-         CASE WHEN EXISTS(SELECT 1 FROM public.orders o WHERE o.id = w.order_id AND o.tipo IN ('Presupuesto','Presupuesto Web')) THEN 'completed' ELSE 'pending' END AS status,
+         CASE
+           WHEN EXISTS(SELECT 1 FROM public.orders o WHERE o.id = w.order_id AND o.tipo IN ('Presupuesto','Presupuesto Web')) THEN 'completed'
+           WHEN w.reservado = true THEN 'en_preparacion'
+           ELSE 'pending'
+         END AS status,
          w.observaciones,
          COALESCE(
            (
