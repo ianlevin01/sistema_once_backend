@@ -2,27 +2,28 @@ import ProductRepository from "../repositories/productRepository.js";
 import S3Service from "./S3Service.js";
 import pool from "../database/db.js";
 
-// ── Caché de config de precios (60s) ─────────────────────────────────────────
-let _configCache    = null;
-let _configCachedAt = 0;
+// ── Caché de config de precios por negocio (60s) ─────────────────────────────
+const _configCache = new Map(); // negocio_id → { config, ts }
 
-async function getPriceConfig() {
-  const now = Date.now();
-  if (_configCache && now - _configCachedAt < 60_000) return _configCache;
+async function getPriceConfig(negocioId) {
+  const now    = Date.now();
+  const cached = _configCache.get(negocioId);
+  if (cached && now - cached.ts < 60_000) return cached.config;
   const { rows } = await pool.query(
-    `SELECT * FROM price_config ORDER BY updated_at DESC LIMIT 1`
+    `SELECT * FROM price_config WHERE negocio_id = $1 LIMIT 1`,
+    [negocioId]
   );
-  _configCache    = rows[0] || { cotizacion_dolar: 1000, pct_1: 0, pct_2: 0, pct_3: 0, pct_4: 0, pct_5: 0 };
-  _configCachedAt = now;
-  return _configCache;
+  const config = rows[0] || { cotizacion_dolar: 1000, pct_1: 0, pct_2: 0, pct_3: 0, pct_4: 0, pct_5: 0 };
+  _configCache.set(negocioId, { config, ts: now });
+  return config;
 }
 
-export function invalidatePriceConfigCache() {
-  _configCache = null;
+export function invalidatePriceConfigCache(negocioId) {
+  if (negocioId) _configCache.delete(negocioId);
+  else           _configCache.clear();
 }
 
 // Construye el array de precios calculados desde costo_usd
-// Devuelve price en ARS y price_usd en USD
 function buildComputedPrices(costo_usd, config) {
   if (!costo_usd || !config) return [];
   const cotizacion = Number(config.cotizacion_dolar || 0);
@@ -30,14 +31,12 @@ function buildComputedPrices(costo_usd, config) {
   const costoArs   = costoUsd * cotizacion;
 
   return [1, 2, 3, 4, 5].map((n) => {
-    const pct      = Number(config[`pct_${n}`] || 0);
-    const factor   = 1 + pct / 100;
-    // ARS = costo_ars * factor
-    // USD = costo_usd * factor  (NO dividir por cotización — es precio en USD directo)
+    const pct    = Number(config[`pct_${n}`] || 0);
+    const factor = 1 + pct / 100;
     return {
       price_type: `precio_${n}`,
-      price:      costoArs * factor,   // ARS → lo que muestra la app
-      price_usd:  costoUsd * factor,   // USD → informativo
+      price:      costoArs * factor,
+      price_usd:  costoUsd * factor,
       pct,
       currency:   "ARS",
     };
@@ -48,20 +47,18 @@ export default class ProductService {
   repo = new ProductRepository();
   s3   = new S3Service();
 
-  async search(name) {
+  async search(name, negocioId) {
     const [products, config] = await Promise.all([
-      this.repo.search(name),
-      getPriceConfig(),
+      this.repo.search(name, negocioId),
+      getPriceConfig(negocioId),
     ]);
 
     return Promise.all(
       products.map(async (product) => {
         const costo_usd = product.costo_usd ? Number(product.costo_usd) : null;
-
         const prices = costo_usd
           ? buildComputedPrices(costo_usd, config)
           : (product.prices ?? []);
-
         return {
           ...product,
           prices,
@@ -88,7 +85,6 @@ export default class ProductService {
       promises.push(this.repo.insertCost(productId, p.cost));
     }
 
-    // Precios manuales — fallback cuando no hay costo_usd
     for (let n = 1; n <= 5; n++) {
       const val = p[`price_${n}`];
       if (val != null && val !== "") {
@@ -99,29 +95,26 @@ export default class ProductService {
     await Promise.all(promises);
   }
 
-  async getCategories() {
-    return this.repo.getCategories();
+  async getCategories(negocioId) {
+    return this.repo.getCategories(negocioId);
   }
 
-  async createCategory(name, parentId = null) {
-    return this.repo.createCategory(name, parentId);
+  async createCategory(name, parentId = null, negocioId) {
+    return this.repo.createCategory(name, parentId, negocioId);
   }
 
-  async getPaginated(limit = 30, offset = 0, categoryId = null, sort = "default") {
+  async getPaginated(limit = 30, offset = 0, categoryId = null, sort = "default", negocioId) {
     const [products, config] = await Promise.all([
-      this.repo.getPaginated(limit, offset, categoryId, sort),
-      getPriceConfig(),
+      this.repo.getPaginated(limit, offset, categoryId, sort, negocioId),
+      getPriceConfig(negocioId),
     ]);
 
     return Promise.all(
       products.map(async (product) => {
         const costo_usd = product.costo_usd ? Number(product.costo_usd) : null;
-
-        // Si tiene costo_usd, calcular precios 1-5 igual que en getById
         const prices = costo_usd
           ? buildComputedPrices(costo_usd, config)
           : (product.prices ?? []);
-
         return {
           ...product,
           prices,
@@ -131,22 +124,19 @@ export default class ProductService {
     );
   }
 
-  async getById(id) {
+  async getById(id, negocioId) {
     const product = await this.repo.getById(id);
-    const config  = await getPriceConfig();
+    const config  = await getPriceConfig(negocioId);
 
-    const costo_usd     = product.costo_usd ? Number(product.costo_usd) : null;
-    const cotizacion    = Number(config.cotizacion_dolar || 0);
-    const costoArs      = costo_usd != null ? costo_usd * cotizacion : null;
+    const costo_usd  = product.costo_usd ? Number(product.costo_usd) : null;
+    const cotizacion = Number(config.cotizacion_dolar || 0);
+    const costoArs   = costo_usd != null ? costo_usd * cotizacion : null;
 
-    // Precios 1-5: si hay costo_usd los calcula, sino usa los de product_prices
     let prices = product.prices || product.product_prices || [];
     if (costo_usd) {
       prices = buildComputedPrices(costo_usd, config);
     }
 
-    // Construir el precio "costo" para el panel — siempre presente si hay costo_usd
-    // Lo agregamos al array como price_type "costo" para que getCost() lo encuentre
     const costoEntry = costo_usd != null
       ? { price_type: "costo", price: costoArs, price_usd: costo_usd, currency: "ARS" }
       : (product.prices || []).find((p) => p.price_type === "costo") || null;
@@ -155,7 +145,6 @@ export default class ProductService {
       ? [costoEntry, ...prices.filter((p) => p.price_type !== "costo")]
       : prices;
 
-    // stock_reserva
     const reservaRes = await pool.query(
       `SELECT stock_reserva FROM products WHERE id = $1`, [id]
     );
@@ -164,7 +153,7 @@ export default class ProductService {
     return {
       ...product,
       prices:           allPrices,
-      product_prices:   allPrices,   // alias por si el frontend usa product_prices
+      product_prices:   allPrices,
       stock_reserva,
       costo_usd,
       cotizacion_dolar: cotizacion,
@@ -172,8 +161,8 @@ export default class ProductService {
     };
   }
 
-  async create(p, files) {
-    const product = await this.repo.create(p);
+  async create(p, files, negocioId) {
+    const product = await this.repo.create({ ...p, negocio_id: negocioId });
     await this.saveCostAndPrices(product.id, p);
 
     if (files?.length) {
@@ -181,26 +170,21 @@ export default class ProductService {
       await Promise.all(uploads.map((key) => this.repo.insertImage(product.id, key)));
     }
 
-    return this.getById(product.id);
+    return this.getById(product.id, negocioId);
   }
 
-  async update(id, p, files) {
+  async update(id, p, files, negocioId) {
     await this.repo.update(id, p);
     await this.saveCostAndPrices(id, p);
 
-    // keepImages puede ser:
-    //   undefined  → el cliente no mandó el campo (no tocar imágenes, comportamiento legacy)
-    //   string     → una sola key a conservar
-    //   string[]   → varias keys a conservar
-    //   ""         → se mandó el campo pero vacío → borrar todas
     const keepKeys =
       p.keepImages === undefined
-        ? null                                              // no vino el campo → no tocar
+        ? null
         : Array.isArray(p.keepImages)
-          ? p.keepImages.filter(Boolean)                   // array → filtrar vacíos
+          ? p.keepImages.filter(Boolean)
           : p.keepImages
-            ? [p.keepImages]                               // string con valor → envolver
-            : [];                                          // string vacío → borrar todas
+            ? [p.keepImages]
+            : [];
 
     const current       = await this.repo.getById(id);
     const currentImages = current.images || [];
@@ -218,7 +202,7 @@ export default class ProductService {
       await Promise.all(uploads.map((key) => this.repo.insertImage(id, key)));
     }
 
-    return this.getById(id);
+    return this.getById(id, negocioId);
   }
 
   async delete(id) {

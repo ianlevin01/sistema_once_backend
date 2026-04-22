@@ -1,7 +1,7 @@
 import pool from "../database/db.js"
 
 export default class ProductRepository {
-  async search(name) {
+  async search(name, negocioId) {
     const res = await pool.query(`
       SELECT
         p.*,
@@ -20,15 +20,18 @@ export default class ProductRepository {
         ) AS stock
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
-      WHERE (p.name ILIKE $1 OR p.code ILIKE $1)
+      WHERE (p.name ILIKE $1 OR p.code ILIKE $1) AND p.negocio_id = $2
       ORDER BY p.name
-    `, [`%${name || ""}%`]);
+    `, [`%${name || ""}%`, negocioId]);
     return res.rows;
   }
 
-  async getPaginated(limit = 30, offset = 0, categoryId = null, sort = "default") {
-    const params      = categoryId ? [limit, offset, categoryId] : [limit, offset];
-    const whereClause = categoryId ? "WHERE p.category_id = $3" : "";
+  async getPaginated(limit = 30, offset = 0, categoryId = null, sort = "default", negocioId) {
+    const params = categoryId ? [limit, offset, categoryId, negocioId] : [limit, offset, negocioId];
+    const negocioParam = categoryId ? 4 : 3;
+    const whereClause = categoryId
+      ? `WHERE p.category_id = $3 AND p.negocio_id = $${negocioParam}`
+      : `WHERE p.negocio_id = $${negocioParam}`;
 
     const ORDER_MAP = {
       price_asc:  "price_asc",
@@ -37,7 +40,6 @@ export default class ProductRepository {
       name_desc:  "p.name DESC",
     };
 
-    // Para price_asc / price_desc necesitamos un subquery al precio_1
     let orderClause;
     if (sort === "price_asc" || sort === "price_desc") {
       const dir = sort === "price_asc" ? "ASC" : "DESC";
@@ -98,22 +100,23 @@ export default class ProductRepository {
     return res.rows;
   }
 
-  async getCategories() {
+  async getCategories(negocioId) {
     const res = await pool.query(
-      "SELECT id, name FROM categories ORDER BY name ASC"
+      "SELECT id, name FROM categories WHERE negocio_id = $1 ORDER BY name ASC",
+      [negocioId]
     );
     return res.rows;
   }
 
-  async createCategory(name, parentId = null) {
+  async createCategory(name, parentId = null, negocioId) {
     const res = await pool.query(
-      `INSERT INTO categories (name, parent_id) VALUES ($1, $2) RETURNING id, name, parent_id`,
-      [name, parentId]
+      `INSERT INTO categories (name, parent_id, negocio_id) VALUES ($1, $2, $3) RETURNING id, name, parent_id`,
+      [name, parentId, negocioId]
     );
     return res.rows[0];
   }
 
-async getById(id) {
+  async getById(id) {
     const res = await pool.query(`
       SELECT
         p.*,
@@ -149,7 +152,6 @@ async getById(id) {
           '[]'
         ) AS prices,
 
-        -- Stock por depósito + reservas por depósito en la misma fila
         COALESCE(
           (
             SELECT json_agg(
@@ -157,8 +159,6 @@ async getById(id) {
                 'warehouse_id',   s.warehouse_id,
                 'warehouse_name', w.name,
                 'quantity',       s.quantity,
-                -- Suma de items en Notas de Pedido activas para este producto
-                -- en este warehouse específico
                 'reserved', COALESCE((
                   SELECT SUM(oi.quantity)
                   FROM order_items oi
@@ -216,10 +216,11 @@ async getById(id) {
         qxb,
         punto_pedido,
         video_url,
-        costo_usd
+        costo_usd,
+        negocio_id
       )
       VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
       )
       RETURNING *`,
       [
@@ -238,6 +239,7 @@ async getById(id) {
         p.punto_pedido,
         p.video_url,
         p.costo_usd ?? null,
+        p.negocio_id,
       ]
     );
 

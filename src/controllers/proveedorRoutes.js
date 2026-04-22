@@ -1,16 +1,17 @@
 import { Router } from "express";
 import ProveedorRepository from "../repositories/proveedorRepository.js";
 import pool from "../database/db.js";
+import { requireAuth } from "./authRoutes.js";
 
 const router = Router();
 const repo   = new ProveedorRepository();
 
 // Búsqueda rápida
-router.get("/search", async (req, res) => {
+router.get("/search", requireAuth, async (req, res) => {
   const { q } = req.query;
   if (!q?.trim()) return res.status(200).json([]);
   try {
-    const result = await repo.search(q);
+    const result = await repo.search(q, req.user.negocio_id);
     return res.status(200).json(result);
   } catch (err) {
     console.error("GET /proveedores/search:", err);
@@ -19,9 +20,9 @@ router.get("/search", async (req, res) => {
 });
 
 // Listado completo
-router.get("/", async (_req, res) => {
+router.get("/", requireAuth, async (req, res) => {
   try {
-    const result = await repo.getAll();
+    const result = await repo.getAll(req.user.negocio_id);
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ message: "Error interno" });
@@ -29,7 +30,7 @@ router.get("/", async (_req, res) => {
 });
 
 // Por ID
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireAuth, async (req, res) => {
   try {
     const result = await repo.getById(req.params.id);
     if (!result) return res.status(404).json({ message: "No encontrado" });
@@ -40,12 +41,12 @@ router.get("/:id", async (req, res) => {
 });
 
 // Crear
-router.post("/", async (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
   if (!req.body.name?.trim()) {
     return res.status(400).json({ message: "El nombre es obligatorio" });
   }
   try {
-    const result = await repo.create(req.body);
+    const result = await repo.create({ ...req.body, negocio_id: req.user.negocio_id });
     return res.status(201).json(result);
   } catch (err) {
     console.error("POST /proveedores:", err);
@@ -54,7 +55,7 @@ router.post("/", async (req, res) => {
 });
 
 // Actualizar
-router.put("/:id", async (req, res) => {
+router.put("/:id", requireAuth, async (req, res) => {
   try {
     const result = await repo.update(req.params.id, req.body);
     return res.status(200).json(result);
@@ -64,7 +65,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // Eliminar
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireAuth, async (req, res) => {
   try {
     await repo.delete(req.params.id);
     return res.status(200).json({ message: "Eliminado" });
@@ -74,7 +75,7 @@ router.delete("/:id", async (req, res) => {
 });
 
 // Cuenta corriente
-router.get("/:id/cuenta-corriente", async (req, res) => {
+router.get("/:id/cuenta-corriente", requireAuth, async (req, res) => {
   try {
     const cc   = await repo.getCuentaCorriente(req.params.id);
     const movs = await repo.getMovimientos(req.params.id);
@@ -85,8 +86,7 @@ router.get("/:id/cuenta-corriente", async (req, res) => {
 });
 
 // ── Registrar pago al proveedor ───────────────────────────────
-// Reduce el saldo a favor (le pagamos lo que le debemos)
-router.post("/:id/pago", async (req, res) => {
+router.post("/:id/pago", requireAuth, async (req, res) => {
   const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual } = req.body;
   if (!monto || Number(monto) <= 0) {
     return res.status(400).json({ message: "Monto inválido" });
@@ -98,6 +98,8 @@ router.post("/:id/pago", async (req, res) => {
       metodo_pago,
       divisa_cobro,
       cotizacion_manual: cotizacion_manual ? Number(cotizacion_manual) : null,
+      negocio_id:        req.user.negocio_id,
+      warehouse_id:      req.user.warehouse_id || null,
     });
     return res.status(200).json(result);
   } catch (err) {
@@ -107,8 +109,7 @@ router.post("/:id/pago", async (req, res) => {
 });
 
 // ── Registrar cobranza del proveedor ─────────────────────────
-// También reduce el saldo a favor (nos devuelve dinero / nota de crédito)
-router.post("/:id/cobranza", async (req, res) => {
+router.post("/:id/cobranza", requireAuth, async (req, res) => {
   const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual } = req.body;
   if (!monto || Number(monto) <= 0) {
     return res.status(400).json({ message: "Monto inválido" });
@@ -120,6 +121,7 @@ router.post("/:id/cobranza", async (req, res) => {
       metodo_pago,
       divisa_cobro,
       cotizacion_manual: cotizacion_manual ? Number(cotizacion_manual) : null,
+      negocio_id:        req.user.negocio_id,
     });
     return res.status(200).json(result);
   } catch (err) {
@@ -128,13 +130,8 @@ router.post("/:id/cobranza", async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────
-// Agregar estas rutas al archivo proveedorRoutes.js existente
-// (o al archivo donde estén las rutas de proveedores)
-// ─────────────────────────────────────────────────────────────
-
 // PUT /proveedores/movimientos/:movId — editar movimiento de proveedor
-router.put("/movimientos/:movId", async (req, res) => {
+router.put("/movimientos/:movId", requireAuth, async (req, res) => {
   const { movId } = req.params;
   const { monto, concepto, metodo_pago } = req.body;
 
@@ -159,7 +156,6 @@ router.put("/movimientos/:movId", async (req, res) => {
 
     if (montoNuevo !== montoAnterior) {
       const diff = montoNuevo - montoAnterior;
-      // Para prov: "pago" = saldo sube (proveedor tiene más crédito), "debito" = saldo baja
       const saldoDelta = mov.tipo === "pago" ? diff : -diff;
       await client.query(
         `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
@@ -196,7 +192,7 @@ router.put("/movimientos/:movId", async (req, res) => {
 });
 
 // DELETE /proveedores/movimientos/:movId — eliminar movimiento de proveedor
-router.delete("/movimientos/:movId", async (req, res) => {
+router.delete("/movimientos/:movId", requireAuth, async (req, res) => {
   const { movId } = req.params;
   const client = await pool.connect();
   try {
@@ -214,7 +210,6 @@ router.delete("/movimientos/:movId", async (req, res) => {
       return res.status(404).json({ message: "Movimiento no encontrado" });
     }
 
-    // "pago" sumó saldo → al eliminar restar; "debito" restó saldo → al eliminar sumar
     const saldoDelta = mov.tipo === "pago" ? -Number(mov.monto) : Number(mov.monto);
     await client.query(
       `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,

@@ -3,12 +3,12 @@ import CustomerRepository from "../repositories/customerRepository.js";
 export default class CustomerService {
   repo = new CustomerRepository();
 
-  searchByName(name, conCC = false) {
-    return this.repo.searchByName(name, conCC);
+  searchByName(name, negocioId, conCC = false) {
+    return this.repo.searchByName(name, negocioId, conCC);
   }
 
-  getAll() {
-    return this.repo.getAll();
+  getAll(negocioId) {
+    return this.repo.getAll(negocioId);
   }
 
   getById(id) {

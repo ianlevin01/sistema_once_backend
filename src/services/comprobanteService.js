@@ -83,7 +83,8 @@ export default class ComprobanteService {
       // Los unit_price del frontend siempre vienen en ARS.
       // Si la divisa del comprobante es USD, guardamos el total en USD.
       const cotizRes = await client.query(
-        `SELECT cotizacion_dolar FROM price_config ORDER BY updated_at DESC LIMIT 1`
+        `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
+        [data.negocio_id]
       );
       const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
       const total = divisa === "USD"
@@ -97,8 +98,8 @@ export default class ComprobanteService {
         INSERT INTO orders (
           customer_id, supplier_id, user_id, warehouse_id,
           total, profit, status, tipo, vendedor, price_type, texto_libre,
-          es_consumidor_final, consumidor_final_nombre, divisa, destino
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          es_consumidor_final, consumidor_final_nombre, divisa, destino, negocio_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
         RETURNING *
       `, [
         data.customer_id  || null,
@@ -114,6 +115,7 @@ export default class ComprobanteService {
         data.consumidor_final_nombre || null,
         divisa,
         (esReposicion || esDevolProv) ? (stockWarehouseId || null) : null,
+        data.negocio_id  || null,
       ]);
       const orderRow = order.rows[0];
 
@@ -134,7 +136,8 @@ export default class ComprobanteService {
         await this.ccRepo.debitarPorComprobante(
           data.customer_id,
           { total: totalARS, orderId: orderRow.id, concepto: `${tipoFinal} — ${orderRow.id.slice(0, 8)}` },
-          client
+          client,
+          data.negocio_id
         );
       }
 
@@ -202,13 +205,13 @@ export default class ComprobanteService {
           const notaParalelaRes = await client.query(`
             INSERT INTO orders (
               customer_id, user_id, total, profit, status, tipo,
-              vendedor, price_type, texto_libre, es_consumidor_final, divisa
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *
+              vendedor, price_type, texto_libre, es_consumidor_final, divisa, negocio_id
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *
           `, [
             data.customer_id, null, removedTotal, 0, "completed",
             tipoFinal === "Presupuesto Web" ? "Nota de Pedido Web" : "Nota de Pedido",
             data.vendedor || null, data.price_type || "precio_1",
-            data.texto_libre || null, false, divisa,
+            data.texto_libre || null, false, divisa, data.negocio_id || null,
           ]);
           const notaParalela = notaParalelaRes.rows[0];
           for (const item of data.removed_items) {
@@ -261,7 +264,7 @@ export default class ComprobanteService {
       // ── Reposición → acreditar CC proveedor ─────────────────
       if (esReposicion && data.supplier_id && totalARS > 0) {
         await this.proveedorRepo.acreditarReposicion(
-          data.supplier_id, { monto: totalARS, orderId: orderRow.id }, client
+          data.supplier_id, { monto: totalARS, orderId: orderRow.id, negocio_id: data.negocio_id }, client
         );
       }
 
@@ -446,34 +449,85 @@ export default class ComprobanteService {
       const paymentRes = await client.query(
         `SELECT method FROM payments WHERE order_id = $1 LIMIT 1`, [id]
       );
-      const paymentMethod     = paymentRes.rows[0]?.method;
+      const paymentMethod     = data.payment_method || paymentRes.rows[0]?.method;
       const esCuentaCorriente = paymentMethod === "Cta Cte";
 
-      if (totalDelta !== 0) {
+      // Detectar cambio de cliente
+      const newCustomerId        = data.customer_id !== undefined ? (data.customer_id || null) : order.customer_id;
+      const newEsConsumidorFinal = data.es_consumidor_final !== undefined ? !!data.es_consumidor_final : !!order.es_consumidor_final;
+      const oldCustomerId        = order.customer_id;
+      const oldEsConsumidorFinal = !!order.es_consumidor_final;
+      const customerChanged      = newCustomerId !== oldCustomerId || newEsConsumidorFinal !== oldEsConsumidorFinal;
+
+      if ((esPresupuesto || esDevolucion) && esCuentaCorriente) {
         const cotizRes = await client.query(
-          `SELECT cotizacion_dolar FROM price_config ORDER BY updated_at DESC LIMIT 1`
+          `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
+          [order.negocio_id]
         );
         const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
 
-        // CC cliente (presupuesto o devolución con Cta Cte)
-        if ((esPresupuesto || esDevolucion) && esCuentaCorriente && order.customer_id && !order.es_consumidor_final) {
-          const cc = await this.ccRepo.getOrCreate(order.customer_id, client);
+        if (customerChanged) {
+          // Revertir CC del cliente anterior (monto completo)
+          if (oldCustomerId && !oldEsConsumidorFinal) {
+            const ccOld = await this.ccRepo.getOrCreate(oldCustomerId, client);
+            const divisaCC = ccOld.divisa ?? "ARS";
+            const montoEnCuenta = divisaCC === "USD" ? oldTotal / cotizacion : oldTotal;
+            if (montoEnCuenta !== 0) {
+              const tipoMov  = esPresupuesto ? "pago" : "debito";
+              const saldoAdj = esPresupuesto ? -montoEnCuenta : montoEnCuenta;
+              await client.query(
+                `INSERT INTO cc_movimientos
+                   (cuenta_corriente_id, tipo, concepto, monto, order_id,
+                    divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+                [ccOld.id, tipoMov, `Reversión cliente — ${id.slice(0,8)}`,
+                 Math.abs(montoEnCuenta), id, divisaCC, "ARS", oldTotal,
+                 divisaCC === "USD" ? cotizacion : null]
+              );
+              await client.query(
+                `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+                [saldoAdj, ccOld.id]
+              );
+            }
+          }
+          // Aplicar CC al nuevo cliente (monto nuevo completo)
+          if (newCustomerId && !newEsConsumidorFinal) {
+            const ccNew = await this.ccRepo.getOrCreate(newCustomerId, client);
+            const divisaCC = ccNew.divisa ?? "ARS";
+            const montoEnCuenta = divisaCC === "USD" ? newTotal / cotizacion : newTotal;
+            if (montoEnCuenta !== 0) {
+              const tipoMov  = esPresupuesto ? "debito" : "pago";
+              const saldoAdj = esPresupuesto ? montoEnCuenta : -montoEnCuenta;
+              await client.query(
+                `INSERT INTO cc_movimientos
+                   (cuenta_corriente_id, tipo, concepto, monto, order_id,
+                    divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+                [ccNew.id, tipoMov, `Asignación cliente — ${id.slice(0,8)}`,
+                 Math.abs(montoEnCuenta), id, divisaCC, "ARS", newTotal,
+                 divisaCC === "USD" ? cotizacion : null]
+              );
+              await client.query(
+                `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+                [saldoAdj, ccNew.id]
+              );
+            }
+          }
+        } else if (totalDelta !== 0 && oldCustomerId && !oldEsConsumidorFinal) {
+          // Mismo cliente, solo ajuste por delta de monto
+          const cc = await this.ccRepo.getOrCreate(oldCustomerId, client);
           const divisaCC      = cc.divisa ?? "ARS";
           const deltaEnCuenta = divisaCC === "USD" ? totalDelta / cotizacion : totalDelta;
 
           if (deltaEnCuenta !== 0) {
-            // Presupuesto: delta positivo = más deuda (debito)
-            // Devolución: delta positivo = más crédito (pago), al revés
             let tipoMov, saldoDelta;
             if (esPresupuesto) {
               tipoMov    = deltaEnCuenta > 0 ? "debito" : "pago";
               saldoDelta = deltaEnCuenta > 0 ? Math.abs(deltaEnCuenta) : -Math.abs(deltaEnCuenta);
             } else {
-              // devolución: más monto = más crédito al cliente
               tipoMov    = deltaEnCuenta > 0 ? "pago" : "debito";
               saldoDelta = deltaEnCuenta > 0 ? -Math.abs(deltaEnCuenta) : Math.abs(deltaEnCuenta);
             }
-
             await client.query(
               `INSERT INTO cc_movimientos
                  (cuenta_corriente_id, tipo, concepto, monto, order_id,
@@ -490,40 +544,37 @@ export default class ComprobanteService {
             );
           }
         }
+      }
 
-        // CC proveedor (reposición o devol a proveedor)
-        if ((esReposicion || esDevolProv) && order.supplier_id) {
-          const ccProv        = await this.proveedorRepo.getOrCreateCC(order.supplier_id, client);
-          const divisaCC      = ccProv.divisa ?? "ARS";
-          const deltaEnCuenta = divisaCC === "USD" ? totalDelta / cotizacion : totalDelta;
+      // CC proveedor (reposición o devol a proveedor) — solo delta de monto
+      if (totalDelta !== 0 && (esReposicion || esDevolProv) && order.supplier_id) {
+        const cotizRes = await client.query(
+          `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
+          [order.negocio_id]
+        );
+        const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
+        const ccProv        = await this.proveedorRepo.getOrCreateCC(order.supplier_id, client);
+        const divisaCC      = ccProv.divisa ?? "ARS";
+        const deltaEnCuenta = divisaCC === "USD" ? totalDelta / cotizacion : totalDelta;
 
-          if (deltaEnCuenta !== 0) {
-            let saldoDelta;
-            if (esReposicion) {
-              // reposición acredita al proveedor; más monto = más saldo
-              saldoDelta = deltaEnCuenta;
-            } else {
-              // devol a proveedor reduce deuda; más monto = menos saldo
-              saldoDelta = -deltaEnCuenta;
-            }
-
-            await client.query(
-              `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
-              [saldoDelta, ccProv.id]
-            );
-            await client.query(
-              `INSERT INTO cc_movimientos_prov
-                 (cuenta_corriente_id, tipo, concepto, monto, order_id,
-                  divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-              [ccProv.id,
-               saldoDelta > 0 ? "pago" : "debito",
-               `Ajuste edición — ${id.slice(0,8)}`,
-               Math.abs(deltaEnCuenta), id,
-               divisaCC, "ARS", Math.abs(totalDelta),
-               divisaCC === "USD" ? cotizacion : null]
-            );
-          }
+        if (deltaEnCuenta !== 0) {
+          const saldoDelta = esReposicion ? deltaEnCuenta : -deltaEnCuenta;
+          await client.query(
+            `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+            [saldoDelta, ccProv.id]
+          );
+          await client.query(
+            `INSERT INTO cc_movimientos_prov
+               (cuenta_corriente_id, tipo, concepto, monto, order_id,
+                divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            [ccProv.id,
+             saldoDelta > 0 ? "pago" : "debito",
+             `Ajuste edición — ${id.slice(0,8)}`,
+             Math.abs(deltaEnCuenta), id,
+             divisaCC, "ARS", Math.abs(totalDelta),
+             divisaCC === "USD" ? cotizacion : null]
+          );
         }
       }
 
@@ -535,9 +586,14 @@ export default class ComprobanteService {
 
       // ── Actualizar campos del order ─────────────────────────
       const updates = { total: newTotal };
-      if (data.vendedor    !== undefined) updates.vendedor    = data.vendedor;
-      if (data.texto_libre !== undefined) updates.texto_libre = data.texto_libre;
-      if (data.price_type  !== undefined) updates.price_type  = data.price_type;
+      if (data.vendedor              !== undefined) updates.vendedor              = data.vendedor;
+      if (data.texto_libre           !== undefined) updates.texto_libre           = data.texto_libre;
+      if (data.price_type            !== undefined) updates.price_type            = data.price_type;
+      if (data.customer_id           !== undefined) updates.customer_id           = data.customer_id || null;
+      if (data.supplier_id           !== undefined) updates.supplier_id           = data.supplier_id || null;
+      if (data.es_consumidor_final   !== undefined) updates.es_consumidor_final   = !!data.es_consumidor_final;
+      if (data.consumidor_final_nombre !== undefined) updates.consumidor_final_nombre = data.consumidor_final_nombre || null;
+      if (data.divisa                !== undefined) updates.divisa                = data.divisa;
 
       const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);
       await client.query(
@@ -599,7 +655,8 @@ export default class ComprobanteService {
       const esCuentaCorriente = paymentRes.rows[0]?.method === "Cta Cte";
 
       const cotizRes = await client.query(
-        `SELECT cotizacion_dolar FROM price_config ORDER BY updated_at DESC LIMIT 1`
+        `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
+        [order.negocio_id]
       );
       const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
 
@@ -794,7 +851,7 @@ export default class ComprobanteService {
   getById(id)     { return this.orderRepo.getById(id); }
   getAll(filters) { return this.orderRepo.getAll(filters); }
 
-  async getListado({ from, to, warehouseId, warehouseName } = {}) {
+  async getListado({ from, to, warehouseId, warehouseName, negocioId } = {}) {
     const client = await pool.connect();
     try {
       const dateFrom = from ? `${from} 00:00:00` : "1970-01-01";
@@ -804,6 +861,7 @@ export default class ComprobanteService {
       // NO convertir el total — devolver en la divisa original del comprobante.
       // El frontend ya muestra el símbolo correcto según p.divisa.
       const presParams = [dateFrom, dateTo];
+      const presNegocioFilter = negocioId ? ` AND o.negocio_id = $${presParams.push(negocioId)}` : "";
       const presWhFilter = warehouseId ? ` AND o.warehouse_id = $${presParams.push(warehouseId)}` : "";
       const presRes = await client.query(`
         SELECT
@@ -822,6 +880,7 @@ export default class ComprobanteService {
         LEFT JOIN payments    p  ON p.order_id = o.id
         WHERE o.tipo IN ('Presupuesto', 'Presupuesto Web', 'Devolucion')
           AND o.created_at BETWEEN $1 AND $2
+          ${presNegocioFilter}
           ${presWhFilter}
         ORDER BY o.created_at DESC
       `, presParams);
@@ -829,6 +888,7 @@ export default class ComprobanteService {
       // ── Reposiciones y Devol a proveedor ─────────────────────
       // Tampoco convertir — devolver total en su divisa.
       const reposParams = [dateFrom, dateTo];
+      const reposNegocioFilter = negocioId ? ` AND o.negocio_id = $${reposParams.push(negocioId)}` : "";
       const reposWhFilter = warehouseId ? ` AND o.warehouse_id = $${reposParams.push(warehouseId)}` : "";
       const reposRes = await client.query(`
         SELECT
@@ -843,6 +903,7 @@ export default class ComprobanteService {
         LEFT JOIN warehouses  w  ON w.id  = o.warehouse_id
         WHERE o.tipo IN ('Reposicion', 'Devol a proveedor')
           AND o.created_at BETWEEN $1 AND $2
+          ${reposNegocioFilter}
           ${reposWhFilter}
         ORDER BY o.created_at DESC
       `, reposParams);
@@ -858,8 +919,9 @@ export default class ComprobanteService {
         })
       );
 
-      // ── Notas de Pedido ──────────────────────────────────────
-      const notasParams = [dateFrom, dateTo];
+      // ── Notas de Pedido (sin filtro de fecha — siempre todas) ──
+      const notasParams = [];
+      const notasNegocioFilter = negocioId ? ` AND o.negocio_id = $${notasParams.push(negocioId)}` : "";
       const notasWhFilter = warehouseId ? ` AND o.warehouse_id = $${notasParams.push(warehouseId)}` : "";
       const notasRes = await client.query(`
         SELECT o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
@@ -869,7 +931,7 @@ export default class ComprobanteService {
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN payments pm ON pm.order_id = o.id
         WHERE o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
-          AND o.created_at BETWEEN $1 AND $2
+          ${notasNegocioFilter}
           ${notasWhFilter}
         ORDER BY o.created_at DESC
       `, notasParams);
@@ -887,6 +949,7 @@ export default class ComprobanteService {
 
       // ── Remitos ──────────────────────────────────────────────
       const remitosParams = [dateFrom, dateTo];
+      const remitosNegocioFilter = negocioId ? ` AND o.negocio_id = $${remitosParams.push(negocioId)}` : "";
       const remitosWhFilter = warehouseId
         ? ` AND o.warehouse_id = $${remitosParams.push(warehouseId)}`
         : "";
@@ -894,6 +957,7 @@ export default class ComprobanteService {
         SELECT o.id, o.created_at, o.total, o.vendedor, o.origen, o.destino
         FROM orders o
         WHERE o.tipo = 'Remito' AND o.created_at BETWEEN $1 AND $2
+          ${remitosNegocioFilter}
           ${remitosWhFilter}
         ORDER BY o.created_at DESC
       `, remitosParams);

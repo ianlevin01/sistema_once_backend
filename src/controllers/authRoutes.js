@@ -35,29 +35,31 @@ router.post("/login", async (req, res) => {
     }
 
     const token = jwt.sign(
-  {
-    id:             matchedUser.id,
-    name:           matchedUser.name,
-    role:           matchedUser.role,
-    warehouse_id:   matchedUser.warehouse_id,
-    warehouse_name: matchedUser.warehouse_name,
-    pct_vendedor:   matchedUser.pct_vendedor ?? 0, // ← nuevo
-  },
-  JWT_SECRET,
-  { expiresIn: "12h" }
-);
+      {
+        id:             matchedUser.id,
+        name:           matchedUser.name,
+        role:           matchedUser.role,
+        warehouse_id:   matchedUser.warehouse_id,
+        warehouse_name: matchedUser.warehouse_name,
+        pct_vendedor:   matchedUser.pct_vendedor ?? 0,
+        negocio_id:     matchedUser.negocio_id,
+      },
+      JWT_SECRET,
+      { expiresIn: "12h" }
+    );
 
-   return res.status(200).json({
-  token,
-  user: {
-    id:             matchedUser.id,
-    name:           matchedUser.name,
-    role:           matchedUser.role,
-    warehouse_id:   matchedUser.warehouse_id,
-    warehouse_name: matchedUser.warehouse_name,
-    pct_vendedor:   matchedUser.pct_vendedor ?? 0, // ← nuevo
-  },
-});
+    return res.status(200).json({
+      token,
+      user: {
+        id:             matchedUser.id,
+        name:           matchedUser.name,
+        role:           matchedUser.role,
+        warehouse_id:   matchedUser.warehouse_id,
+        warehouse_name: matchedUser.warehouse_name,
+        pct_vendedor:   matchedUser.pct_vendedor ?? 0,
+        negocio_id:     matchedUser.negocio_id,
+      },
+    });
   } catch (err) {
     console.error("POST /auth/login:", err);
     return res.status(500).json({ message: "Error interno" });

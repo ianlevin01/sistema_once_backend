@@ -17,6 +17,7 @@ router.post("/", requireAuth, async (req, res) => {
     ...req.body,
     user_id:      req.user.id,
     warehouse_id: req.user.warehouse_id || null,
+    negocio_id:   req.user.negocio_id,
   });
   return res.status(201).json(result);
 });
@@ -33,7 +34,7 @@ router.get("/:id", async (req, res) => {
 router.get("/", requireAuth, async (req, res) => {
   const { from, to } = req.query;
   const warehouseId = req.user.role === "superadmin" ? null : req.user.warehouse_id;
-  const result = await svc.getAll({ from, to, warehouseId });
+  const result = await svc.getAll({ from, to, warehouseId, negocioId: req.user.negocio_id });
   return res.status(200).json(result);
 });
 

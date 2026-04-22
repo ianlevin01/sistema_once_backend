@@ -7,7 +7,7 @@ const router = Router();
 const svc    = new ComprobanteService();
 
 // ── Crear comprobante ─────────────────────────────────────────
-router.post("/", async (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
   const { items } = req.body;
   const esReposicion      = req.body.tipo === "Reposicion";
   const esDevolProv       = req.body.tipo === "Devol a proveedor";
@@ -25,7 +25,11 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    const result = await svc.create(req.body);
+    const result = await svc.create({
+      ...req.body,
+      user_id:    req.user.id,
+      negocio_id: req.user.negocio_id,
+    });
     return res.status(201).json(result);
   } catch (err) {
     console.error("Error POST /comprobantes:", err);
@@ -34,8 +38,7 @@ router.post("/", async (req, res) => {
 });
 
 // ── Editar comprobante ────────────────────────────────────────
-// Body: { items, vendedor?, texto_libre?, price_type?, payment_method? }
-router.put("/:id", async (req, res) => {
+router.put("/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
   if (!req.body.items?.length) {
     return res.status(400).json({ message: "Se requiere al menos un item" });
@@ -57,6 +60,7 @@ router.get("/listado", requireAuth, async (req, res) => {
     const result = await svc.getListado({
       from,
       to,
+      negocioId:     req.user.negocio_id,
       warehouseId:   isSuperAdmin ? null : req.user.warehouse_id,
       warehouseName: isSuperAdmin ? null : req.user.warehouse_name,
     });
@@ -68,7 +72,7 @@ router.get("/listado", requireAuth, async (req, res) => {
 });
 
 // ── Último precio de un producto para un cliente ──────────────
-router.get("/last-price", async (req, res) => {
+router.get("/last-price", requireAuth, async (req, res) => {
   const { customer_id, product_id } = req.query;
   if (!customer_id || !product_id) {
     return res.status(400).json({ message: "customer_id y product_id son requeridos" });
@@ -83,9 +87,12 @@ router.get("/last-price", async (req, res) => {
 });
 
 // ── Listado de warehouses ─────────────────────────────────────
-router.get("/warehouses", async (_req, res) => {
+router.get("/warehouses", requireAuth, async (req, res) => {
   try {
-    const result = await pool.query(`SELECT id, name FROM warehouses ORDER BY name`);
+    const result = await pool.query(
+      `SELECT id, name FROM warehouses WHERE negocio_id = $1 ORDER BY name`,
+      [req.user.negocio_id]
+    );
     return res.status(200).json(result.rows);
   } catch (err) {
     return res.status(500).json({ message: "Error interno" });
@@ -93,7 +100,7 @@ router.get("/warehouses", async (_req, res) => {
 });
 
 // ── Obtener comprobante por ID ────────────────────────────────
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireAuth, async (req, res) => {
   const result = await svc.getById(req.params.id);
   if (!result) return res.status(404).json({ message: "No encontrado" });
   return res.status(200).json(result);
@@ -103,12 +110,12 @@ router.get("/:id", async (req, res) => {
 router.get("/", requireAuth, async (req, res) => {
   const { from, to } = req.query;
   const warehouseId = req.user.role === "superadmin" ? null : req.user.warehouse_id;
-  const result = await svc.getAll({ from, to, warehouseId });
+  const result = await svc.getAll({ from, to, warehouseId, negocioId: req.user.negocio_id });
   return res.status(200).json(result);
 });
 
 // ── Eliminar (revierte stock + CC) ───────────────────────────
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireAuth, async (req, res) => {
   try {
     await svc.delete(req.params.id);
     return res.status(200).json({ message: "Eliminado" });

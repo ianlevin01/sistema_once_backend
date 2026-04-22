@@ -6,10 +6,10 @@ export default class RemitoService {
   orderRepo = new OrderRepository();
   itemRepo  = new OrderItemRepository();
 
-  async #findWarehouseId(client, name) {
+  async #findWarehouseId(client, name, negocioId) {
     const res = await client.query(
-      `SELECT id FROM warehouses WHERE TRIM(name) ILIKE TRIM($1) ORDER BY id LIMIT 1`,
-      [name]
+      `SELECT id FROM warehouses WHERE TRIM(name) ILIKE TRIM($1) AND negocio_id = $2 ORDER BY id LIMIT 1`,
+      [name, negocioId]
     );
     if (!res.rows[0]) {
       console.warn(`[RemitoService] Warehouse no encontrado: "${name}"`);
@@ -52,14 +52,16 @@ export default class RemitoService {
         destino:     data.destino   || null,
         price_type:  data.price_type || "precio_1",
         vendedor:    data.vendedor  || null,
+        negocio_id:  data.negocio_id || null,
       }, client);
 
       for (const item of data.items) {
         await this.itemRepo.create(item, order.id, client);
       }
 
-      const origenId  = await this.#findWarehouseId(client, data.origen);
-      const destinoId = await this.#findWarehouseId(client, data.destino);
+      const negocioId = data.negocio_id;
+      const origenId  = await this.#findWarehouseId(client, data.origen, negocioId);
+      const destinoId = await this.#findWarehouseId(client, data.destino, negocioId);
 
       for (const item of data.items) {
         if (!item.product_id) continue;
@@ -100,8 +102,8 @@ export default class RemitoService {
     return { ...rows[0], items: itemsRes.rows };
   }
 
-  getAll({ from, to, warehouseId } = {}) {
-    return this.orderRepo.getAll({ from, to, warehouseId, tipo: "Remito" });
+  getAll({ from, to, warehouseId, negocioId } = {}) {
+    return this.orderRepo.getAll({ from, to, warehouseId, negocioId, tipo: "Remito" });
   }
 
   async updateRemito(id, data) {
@@ -111,7 +113,7 @@ export default class RemitoService {
 
       // 1. Cargar estado actual para revertir stock
       const oldOrderRes = await client.query(
-        `SELECT origen, destino FROM orders WHERE id = $1`, [id]
+        `SELECT origen, destino, negocio_id FROM orders WHERE id = $1`, [id]
       );
       const oldOrder = oldOrderRes.rows[0];
       if (!oldOrder) throw new Error("Remito no encontrado");
@@ -121,8 +123,9 @@ export default class RemitoService {
       );
 
       // 2. Revertir stock de la versión anterior
-      const oldOrigenId  = oldOrder.origen  ? await this.#findWarehouseId(client, oldOrder.origen)  : null;
-      const oldDestinoId = oldOrder.destino ? await this.#findWarehouseId(client, oldOrder.destino) : null;
+      const negocioId    = oldOrder.negocio_id || data.negocio_id || null;
+      const oldOrigenId  = oldOrder.origen  ? await this.#findWarehouseId(client, oldOrder.origen, negocioId)  : null;
+      const oldDestinoId = oldOrder.destino ? await this.#findWarehouseId(client, oldOrder.destino, negocioId) : null;
 
       for (const item of oldItemsRes.rows) {
         if (!item.product_id) continue;
@@ -146,8 +149,8 @@ export default class RemitoService {
       }
 
       // 5. Aplicar nuevo stock
-      const newOrigenId  = data.origen  ? await this.#findWarehouseId(client, data.origen)  : null;
-      const newDestinoId = data.destino ? await this.#findWarehouseId(client, data.destino) : null;
+      const newOrigenId  = data.origen  ? await this.#findWarehouseId(client, data.origen, negocioId)  : null;
+      const newDestinoId = data.destino ? await this.#findWarehouseId(client, data.destino, negocioId) : null;
 
       for (const item of data.items || []) {
         if (!item.product_id) continue;
@@ -171,7 +174,7 @@ export default class RemitoService {
       await client.query("BEGIN");
 
       const orderRes = await client.query(
-        `SELECT origen, destino FROM orders WHERE id = $1`, [id]
+        `SELECT origen, destino, negocio_id FROM orders WHERE id = $1`, [id]
       );
       const order = orderRes.rows[0];
 
@@ -181,8 +184,9 @@ export default class RemitoService {
       const items = itemsRes.rows;
 
       if (order && items.length > 0) {
-        const origenId  = order.origen  ? await this.#findWarehouseId(client, order.origen)  : null;
-        const destinoId = order.destino ? await this.#findWarehouseId(client, order.destino) : null;
+        const negocioId = order.negocio_id;
+        const origenId  = order.origen  ? await this.#findWarehouseId(client, order.origen, negocioId)  : null;
+        const destinoId = order.destino ? await this.#findWarehouseId(client, order.destino, negocioId) : null;
 
         for (const item of items) {
           if (!item.product_id) continue;

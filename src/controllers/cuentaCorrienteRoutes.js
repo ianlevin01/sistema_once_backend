@@ -1,14 +1,15 @@
 import { Router } from "express";
 import pool from "../database/db.js";
 import CuentaCorrienteService from "../services/cuentaCorrienteService.js";
+import { requireAuth } from "./authRoutes.js";
 
 const router = Router();
 const svc = new CuentaCorrienteService();
 
 // GET todas las cuentas corrientes
-router.get("/", async (req, res) => {
+router.get("/", requireAuth, async (req, res) => {
   try {
-    const result = await svc.getAll();
+    const result = await svc.getAll(req.user.negocio_id);
     return res.status(200).json(result);
   } catch (err) {
     console.error("Error en GET /cuenta-corriente:", err);
@@ -17,7 +18,7 @@ router.get("/", async (req, res) => {
 });
 
 // GET cuenta corriente de un cliente (con movimientos)
-router.get("/cliente/:customerId", async (req, res) => {
+router.get("/cliente/:customerId", requireAuth, async (req, res) => {
   try {
     const result = await svc.getByCustomer(req.params.customerId);
     if (!result) return res.status(404).json({ message: "Sin cuenta corriente" });
@@ -29,7 +30,7 @@ router.get("/cliente/:customerId", async (req, res) => {
 });
 
 // POST registrar pago (legacy)
-router.post("/cliente/:customerId/pago", async (req, res) => {
+router.post("/cliente/:customerId/pago", requireAuth, async (req, res) => {
   const { monto, concepto } = req.body;
   if (!monto || Number(monto) <= 0)
     return res.status(400).json({ message: "Monto inválido" });
@@ -44,7 +45,7 @@ router.post("/cliente/:customerId/pago", async (req, res) => {
 });
 
 // POST agregar saldo a favor (legacy)
-router.post("/cliente/:customerId/saldo", async (req, res) => {
+router.post("/cliente/:customerId/saldo", requireAuth, async (req, res) => {
   const { monto, concepto } = req.body;
   if (!monto || Number(monto) <= 0)
     return res.status(400).json({ message: "Monto inválido" });
@@ -60,7 +61,7 @@ router.post("/cliente/:customerId/saldo", async (req, res) => {
 });
 
 // POST registrar cobranza
-router.post("/cliente/:customerId/cobranza", async (req, res) => {
+router.post("/cliente/:customerId/cobranza", requireAuth, async (req, res) => {
   const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual } = req.body;
   if (!monto || Number(monto) <= 0)
     return res.status(400).json({ message: "Monto inválido" });
@@ -73,6 +74,8 @@ router.post("/cliente/:customerId/cobranza", async (req, res) => {
       metodo_pago,
       divisa_cobro:     divisa_cobro || null,
       cotizacion_manual: cotizacion_manual ? Number(cotizacion_manual) : null,
+      negocio_id:       req.user.negocio_id,
+      warehouse_id:     req.user.warehouse_id || null,
     });
     return res.status(200).json(result);
   } catch (err) {
@@ -81,11 +84,8 @@ router.post("/cliente/:customerId/cobranza", async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────
 // PUT /movimientos/:movId  — editar un movimiento de cliente
-// Body: { monto?, concepto?, metodo_pago? }
-// ─────────────────────────────────────────────────────────────
-router.put("/movimientos/:movId", async (req, res) => {
+router.put("/movimientos/:movId", requireAuth, async (req, res) => {
   const { movId } = req.params;
   const { monto, concepto, metodo_pago } = req.body;
 
@@ -93,7 +93,6 @@ router.put("/movimientos/:movId", async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Leer movimiento actual
     const movRes = await client.query(
       `SELECT m.*, cc.divisa AS divisa_cuenta, cc.id AS cc_id, cc.saldo AS cc_saldo
        FROM cc_movimientos m
@@ -110,10 +109,8 @@ router.put("/movimientos/:movId", async (req, res) => {
     const montoAnterior = Number(mov.monto);
     let montoNuevo = monto !== undefined ? Number(monto) : montoAnterior;
 
-    // Si el monto cambió, recalcular saldo de la cuenta
     if (montoNuevo !== montoAnterior) {
       const diff = montoNuevo - montoAnterior;
-      // Para débito: saldo sube con diff; para pago: saldo baja con diff
       const saldoDelta = mov.tipo === "debito" ? diff : -diff;
 
       await client.query(
@@ -122,7 +119,6 @@ router.put("/movimientos/:movId", async (req, res) => {
       );
     }
 
-    // Actualizar el movimiento
     const updates = {};
     if (monto      !== undefined) updates.monto      = montoNuevo;
     if (concepto   !== undefined) updates.concepto   = concepto;
@@ -138,7 +134,6 @@ router.put("/movimientos/:movId", async (req, res) => {
 
     await client.query("COMMIT");
 
-    // Devolver CC actualizada
     const ccRes = await client.query(
       `SELECT cc.*, c.name AS customer_name FROM cuentas_corrientes cc
        JOIN customers c ON c.id = cc.customer_id WHERE cc.id = $1`,
@@ -154,10 +149,8 @@ router.put("/movimientos/:movId", async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────
 // DELETE /movimientos/:movId — eliminar movimiento de cliente
-// ─────────────────────────────────────────────────────────────
-router.delete("/movimientos/:movId", async (req, res) => {
+router.delete("/movimientos/:movId", requireAuth, async (req, res) => {
   const { movId } = req.params;
   const client = await pool.connect();
   try {
@@ -194,10 +187,10 @@ router.delete("/movimientos/:movId", async (req, res) => {
 });
 
 // GET cobranzas por rango de fecha
-router.get("/cobranzas", async (req, res) => {
+router.get("/cobranzas", requireAuth, async (req, res) => {
   const { from, to } = req.query;
   try {
-    const result = await svc.getCobranzas(from, to);
+    const result = await svc.getCobranzas(from, to, req.user.negocio_id);
     return res.status(200).json(result);
   } catch (err) {
     console.error("Error en GET /cuenta-corriente/cobranzas:", err);

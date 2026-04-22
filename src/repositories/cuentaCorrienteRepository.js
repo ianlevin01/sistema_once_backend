@@ -4,26 +4,15 @@ import pool from "../database/db.js";
 // Helpers de conversión
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Lee la cotización del dólar desde price_config.
- * Siempre toma la última fila.
- */
-async function getCotizacion(client) {
+async function getCotizacion(client, negocioId) {
   const db = client || pool;
   const res = await db.query(
-    `SELECT cotizacion_dolar FROM price_config ORDER BY updated_at DESC LIMIT 1`
+    `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
+    [negocioId]
   );
   return Number(res.rows[0]?.cotizacion_dolar ?? 1000);
 }
 
-/**
- * Convierte un monto desde divisa origen a divisa destino.
- * @param {number} monto          - monto en divisa origen
- * @param {string} divisaOrigen   - 'ARS' | 'USD'
- * @param {string} divisaDestino  - 'ARS' | 'USD'
- * @param {number} cotizacion     - precio del dólar en ARS
- * @returns {number}              - monto convertido
- */
 function convertir(monto, divisaOrigen, divisaDestino, cotizacion) {
   if (divisaOrigen === divisaDestino) return monto;
   if (divisaOrigen === "ARS" && divisaDestino === "USD") return monto / cotizacion;
@@ -97,7 +86,7 @@ export default class CuentaCorrienteRepository {
   }
 
   // ── Listar todas las cuentas con saldos y fechas ──────────
-  async getAll() {
+  async getAll(negocioId) {
     const res = await pool.query(`
       SELECT
         cc.id,
@@ -120,14 +109,13 @@ export default class CuentaCorrienteRepository {
         ) AS ultimo_pago
       FROM cuentas_corrientes cc
       JOIN customers c ON c.id = cc.customer_id
+      WHERE c.negocio_id = $1
       ORDER BY c.name ASC
-    `);
+    `, [negocioId]);
     return res.rows;
   }
 
   // ── Agregar movimiento y actualizar saldo ──────────────────
-  // monto: ya convertido a la divisa de la cuenta
-  // montoOriginal + divisaCobro + cotizacion: para auditoría
   async addMovimiento({
     cuentaId,
     tipo,
@@ -173,11 +161,10 @@ export default class CuentaCorrienteRepository {
   }
 
   // ── Débito por comprobante (desde ComprobanteService) ──────
-  // Convierte el total del comprobante (siempre en ARS) a la divisa de la cuenta
-  async debitarPorComprobante(customerId, { total, orderId, concepto }, client) {
+  async debitarPorComprobante(customerId, { total, orderId, concepto }, client, negocioId) {
     const db = client || pool;
 
-    const cotizacion = await getCotizacion(db);
+    const cotizacion = await getCotizacion(db, negocioId);
     const cuenta     = await this.getOrCreate(customerId, db);
     if (!cuenta) return null; // cliente web: sin CC
     const divisa     = cuenta.divisa ?? "ARS";
@@ -191,7 +178,7 @@ export default class CuentaCorrienteRepository {
       monto:           montoEnCuenta,
       orderId,
       divisa_cuenta:   divisa,
-      divisa_cobro:    "ARS",           // el comprobante siempre se genera en ARS
+      divisa_cobro:    "ARS",
       monto_original:  total,
       cotizacion_usada: divisa === "USD" ? cotizacion : null,
     }, db);
@@ -249,15 +236,12 @@ export default class CuentaCorrienteRepository {
   }
 
   // ── Registrar cobranza (CC + cash_movements) ───────────────
-  // monto        = lo que el cliente pagó, en divisa_cobro
-  // divisa_cobro = en qué moneda trajo la plata ('ARS' | 'USD')
-  // La cuenta se acredita en su propia divisa (con conversión si hace falta)
-  async registrarCobranza(customerId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual }) {
+  async registrarCobranza(customerId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, negocio_id, warehouse_id }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      const cotizacion = cotizacion_manual != null ? cotizacion_manual : await getCotizacion(client);
+      const cotizacion = cotizacion_manual != null ? cotizacion_manual : await getCotizacion(client, negocio_id);
 
       const custRes = await client.query(
         `SELECT name FROM customers WHERE id = $1`, [customerId]
@@ -269,10 +253,8 @@ export default class CuentaCorrienteRepository {
       const divisa  = cuenta.divisa ?? "ARS";
       const divisaCobro = divisa_cobro ?? divisa;
 
-      // Convertir el monto cobrado a la divisa de la cuenta
       const montoEnCuenta = convertir(monto, divisaCobro, divisa, cotizacion);
 
-      // Movimiento en CC
       await client.query(
         `INSERT INTO cc_movimientos
            (cuenta_corriente_id, tipo, concepto, monto, metodo_pago,
@@ -290,7 +272,6 @@ export default class CuentaCorrienteRepository {
         ]
       );
 
-      // Actualizar saldo
       await client.query(
         `UPDATE cuentas_corrientes
          SET saldo = saldo - $1, updated_at = NOW()
@@ -298,13 +279,11 @@ export default class CuentaCorrienteRepository {
         [montoEnCuenta, cuenta.id]
       );
 
-      // cash_movements: registrar en la divisa real que entró a caja
-      // amount en ARS siempre (para que la caja sume en una sola moneda)
       const montoARS = convertir(monto, divisaCobro, "ARS", cotizacion);
       await client.query(
-        `INSERT INTO cash_movements (type, source, amount, reference_id)
-         VALUES ('ingreso', $1, $2, $3)`,
-        [metodo_pago, montoARS, cuenta.id]
+        `INSERT INTO cash_movements (type, source, amount, reference_id, negocio_id, warehouse_id)
+         VALUES ('ingreso', $1, $2, $3, $4, $5)`,
+        [metodo_pago, montoARS, cuenta.id, negocio_id, warehouse_id || null]
       );
 
       await client.query("COMMIT");
@@ -322,10 +301,14 @@ export default class CuentaCorrienteRepository {
   }
 
   // ── Obtener cobranzas por rango de fecha ───────────────────
-  async getCobranzas(from, to) {
+  async getCobranzas(from, to, negocioId) {
     const params = [];
     let where = `WHERE m.tipo = 'pago' AND m.metodo_pago IS NOT NULL`;
 
+    if (negocioId) {
+      params.push(negocioId);
+      where += ` AND c.negocio_id = $${params.length}`;
+    }
     if (from) {
       params.push(from);
       where += ` AND m.created_at::date >= $${params.length}`;

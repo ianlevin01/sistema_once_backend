@@ -16,7 +16,7 @@ export default class WebOrderService {
   // SET RESERVADO
   // Cuando reservado pasa a TRUE → crea una Nota de Pedido automáticamente
   // ─────────────────────────────────────────────────────────────────────────
-  async setReservado(id, reservado, warehouseId = null) {
+  async setReservado(id, reservado, warehouseId = null, negocioId = null) {
     const result = await this.repo.setReservado(id, reservado);
 
     if (reservado) {
@@ -49,6 +49,7 @@ export default class WebOrderService {
             texto_libre:             webOrder.observaciones || null,
             escenario:               null,
             web_order_id:            id,
+            negocio_id:              negocioId,
             items,
           });
           // Enviar email "en preparación"
@@ -109,6 +110,7 @@ export default class WebOrderService {
         observaciones:  data.observaciones,
         total,
         color:          data.color,
+        negocio_id:     data.negocio_id || null,
       }, client);
 
       await this.repo.replaceItems(order.id, data.items || [], client);

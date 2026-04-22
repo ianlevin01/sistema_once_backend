@@ -34,7 +34,7 @@ export default class WebOrderRepository {
   }
 
   // ── LISTADO con filtros ────────────────────────────────────
-  async getAll({ from, to, color, reservado, search }) {
+  async getAll({ from, to, color, reservado, search, negocioId }) {
     let query = `
       SELECT
         w.*,
@@ -63,6 +63,10 @@ export default class WebOrderRepository {
     `;
     const params = [];
 
+    if (negocioId) {
+      params.push(negocioId);
+      query += ` AND w.negocio_id = $${params.length}`;
+    }
     if (from) {
       params.push(from);
       query += ` AND w.created_at >= $${params.length}`;
@@ -95,8 +99,8 @@ export default class WebOrderRepository {
     const db = client || pool;
     const res = await db.query(`
       INSERT INTO web_orders
-        (customer_id, customer_name, customer_email, customer_phone, observaciones, total, color)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+        (customer_id, customer_name, customer_email, customer_phone, observaciones, total, color, negocio_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
     `, [
       data.customer_id    || null,
@@ -106,6 +110,7 @@ export default class WebOrderRepository {
       data.observaciones  || null,
       data.total          || 0,
       data.color          || 'pending',
+      data.negocio_id     || null,
     ]);
     return res.rows[0];
   }

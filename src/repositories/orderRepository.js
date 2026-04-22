@@ -7,8 +7,8 @@ export default class OrderRepository {
       `INSERT INTO orders
         (customer_id, user_id, total, profit, status,
          tipo, vendedor, price_type, texto_libre,
-         origen, destino, supplier_id, warehouse_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         origen, destino, supplier_id, warehouse_id, negocio_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING *`,
       [
         data.customer_id  || null,
@@ -24,6 +24,7 @@ export default class OrderRepository {
         data.destino      || null,
         data.supplier_id  || null,
         data.warehouse_id || null,
+        data.negocio_id   || null,
       ]
     );
     return res.rows[0];
@@ -82,7 +83,7 @@ export default class OrderRepository {
     return res.rows[0];
   }
 
-  async getAll({ from, to, warehouseId, tipo } = {}) {
+  async getAll({ from, to, warehouseId, tipo, negocioId } = {}) {
     let query = `
       SELECT
         o.*,
@@ -97,10 +98,11 @@ export default class OrderRepository {
     `;
     const params = [];
 
-    if (tipo)        { params.push(tipo);                query += ` AND o.tipo = $${params.length}`; }
-    if (from)        { params.push(`${from} 00:00:00`); query += ` AND o.created_at >= $${params.length}`; }
-    if (to)          { params.push(`${to} 23:59:59`);   query += ` AND o.created_at <= $${params.length}`; }
-    if (warehouseId) { params.push(warehouseId);         query += ` AND o.warehouse_id = $${params.length}`; }
+    if (negocioId)   { params.push(negocioId);             query += ` AND o.negocio_id = $${params.length}`; }
+    if (tipo)        { params.push(tipo);                   query += ` AND o.tipo = $${params.length}`; }
+    if (from)        { params.push(`${from} 00:00:00`);    query += ` AND o.created_at >= $${params.length}`; }
+    if (to)          { params.push(`${to} 23:59:59`);      query += ` AND o.created_at <= $${params.length}`; }
+    if (warehouseId) { params.push(warehouseId);            query += ` AND o.warehouse_id = $${params.length}`; }
 
     query += ` ORDER BY o.created_at DESC`;
 
@@ -108,7 +110,7 @@ export default class OrderRepository {
     return res.rows;
   }
 
-  async getAllByTipo(tipo, { from, to, warehouseName } = {}) {
+  async getAllByTipo(tipo, { from, to, warehouseName, negocioId } = {}) {
     let query = `
       SELECT o.*, c.name AS customer_name
       FROM orders o
@@ -117,19 +119,16 @@ export default class OrderRepository {
     `;
     const params = [tipo];
 
-    if (from)          { params.push(`${from} 00:00:00`); query += ` AND o.created_at >= $${params.length}`; }
-    if (to)            { params.push(`${to} 23:59:59`);   query += ` AND o.created_at <= $${params.length}`; }
-    if (warehouseName) { params.push(warehouseName);       query += ` AND (o.origen = $${params.length} OR o.destino = $${params.length})`; }
+    if (negocioId)     { params.push(negocioId);             query += ` AND o.negocio_id = $${params.length}`; }
+    if (from)          { params.push(`${from} 00:00:00`);    query += ` AND o.created_at >= $${params.length}`; }
+    if (to)            { params.push(`${to} 23:59:59`);      query += ` AND o.created_at <= $${params.length}`; }
+    if (warehouseName) { params.push(warehouseName);          query += ` AND (o.origen = $${params.length} OR o.destino = $${params.length})`; }
 
     query += ` ORDER BY o.created_at DESC`;
     const res = await pool.query(query, params);
     return res.rows;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Último precio al que se le vendió un producto a un cliente
-  // Devuelve { unit_price, created_at } o null
-  // ─────────────────────────────────────────────────────────────────────────
   async getLastSalePrice(customerId, productId) {
     const res = await pool.query(
       `SELECT oi.unit_price, o.created_at

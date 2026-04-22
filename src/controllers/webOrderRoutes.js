@@ -19,12 +19,13 @@ function resolveCustomerFromToken(req) {
   }
 }
 
-router.get("/", async (req, res) => {
+router.get("/", requireAuth, async (req, res) => {
   const { from, to, color, reservado, search } = req.query;
   const result = await svc.getAll({
     from, to, color,
     reservado: reservado !== undefined ? reservado === "true" : undefined,
     search,
+    negocioId: req.user.negocio_id,
   });
   return res.status(200).json(result);
 });
@@ -36,7 +37,7 @@ router.get("/:id", async (req, res) => {
 });
 
 router.post("/", async (req, res) => {
-  let { customer_id, customer_name, items } = req.body;
+  let { customer_id, customer_name, items, negocio_id } = req.body;
 
   // Intentar resolver desde JWT si no vino en el body
   if (!customer_id) {
@@ -53,7 +54,7 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    const result = await svc.create({ ...req.body, customer_id });
+    const result = await svc.create({ ...req.body, customer_id, negocio_id: negocio_id || null });
     return res.status(201).json(result);
   } catch (err) {
     console.error("webOrderRoutes POST error:", err.message);
@@ -81,7 +82,7 @@ router.patch("/:id/reservado", requireAuth, async (req, res) => {
   const { reservado } = req.body;
   if (reservado === undefined)
     return res.status(400).json({ message: "reservado requerido" });
-  const result = await svc.setReservado(req.params.id, reservado, req.user.warehouse_id);
+  const result = await svc.setReservado(req.params.id, reservado, req.user.warehouse_id, req.user.negocio_id);
   return res.status(200).json(result);
 });
 
