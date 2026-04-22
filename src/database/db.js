@@ -10,8 +10,8 @@ const pool = new Pool({
   }
 });
 
-pool.on('connect', (client) => {
-  client.query("SET timezone = 'America/Argentina/Buenos_Aires'");
+pool.on('connect', async (client) => {
+  await client.query("SET timezone = 'America/Argentina/Buenos_Aires'");
 });
 
 export default pool;
