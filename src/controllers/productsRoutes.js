@@ -61,14 +61,26 @@ router.get("/", resolveNegocio, async (req, res) => {
 
 // Crear producto
 router.post("/", requireAuth, upload.array("images"), async (req, res) => {
-  const result = await svc.create(req.body, req.files, req.user.negocio_id);
-  return res.status(201).json(result);
+  try {
+    const result = await svc.create(req.body, req.files, req.user.negocio_id);
+    return res.status(201).json(result);
+  } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ message: "Ya existe un producto con ese código" });
+    console.error("Error POST /products:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
 });
 
 // Modificar producto
 router.put("/:id", requireAuth, upload.array("images"), async (req, res) => {
-  const result = await svc.update(req.params.id, req.body, req.files, req.user.negocio_id);
-  return res.status(200).json(result);
+  try {
+    const result = await svc.update(req.params.id, req.body, req.files, req.user.negocio_id);
+    return res.status(200).json(result);
+  } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ message: "Ya existe un producto con ese código" });
+    console.error("Error PUT /products:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
 });
 
 // Eliminar producto

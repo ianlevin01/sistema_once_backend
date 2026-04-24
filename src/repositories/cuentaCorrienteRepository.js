@@ -258,8 +258,8 @@ export default class CuentaCorrienteRepository {
       await client.query(
         `INSERT INTO cc_movimientos
            (cuenta_corriente_id, tipo, concepto, monto, metodo_pago,
-            divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-         VALUES ($1,'pago',$2,$3,$4,$5,$6,$7,$8)`,
+            divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, warehouse_id)
+         VALUES ($1,'pago',$2,$3,$4,$5,$6,$7,$8,$9)`,
         [
           cuenta.id,
           concepto || "Cobranza",
@@ -269,6 +269,7 @@ export default class CuentaCorrienteRepository {
           divisaCobro,
           monto,
           divisaCobro !== divisa ? cotizacion : null,
+          warehouse_id || null,
         ]
       );
 
@@ -301,13 +302,17 @@ export default class CuentaCorrienteRepository {
   }
 
   // ── Obtener cobranzas por rango de fecha ───────────────────
-  async getCobranzas(from, to, negocioId) {
+  async getCobranzas(from, to, negocioId, warehouseId) {
     const params = [];
     let where = `WHERE m.tipo = 'pago' AND m.metodo_pago IS NOT NULL`;
 
     if (negocioId) {
       params.push(negocioId);
       where += ` AND c.negocio_id = $${params.length}`;
+    }
+    if (warehouseId) {
+      params.push(warehouseId);
+      where += ` AND m.warehouse_id = $${params.length}`;
     }
     if (from) {
       params.push(from);

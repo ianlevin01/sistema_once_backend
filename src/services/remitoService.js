@@ -41,18 +41,19 @@ export default class RemitoService {
       );
 
       const order = await this.orderRepo.create({
-        customer_id:  data.customer_id  || null,
-        user_id:      data.user_id      || null,
-        warehouse_id: data.warehouse_id || null,
+        customer_id:       data.customer_id       || null,
+        recipient_user_id: data.recipient_user_id || null,
+        user_id:           data.user_id           || null,
+        warehouse_id:      data.warehouse_id      || null,
         total,
-        profit:      0,
-        status:      "remito",
-        tipo:        "Remito",
-        origen:      data.origen    || null,
-        destino:     data.destino   || null,
-        price_type:  data.price_type || "precio_1",
-        vendedor:    data.vendedor  || null,
-        negocio_id:  data.negocio_id || null,
+        profit:     0,
+        status:     "remito",
+        tipo:       "Remito",
+        origen:     data.origen     || null,
+        destino:    data.destino    || null,
+        price_type: data.price_type || "precio_1",
+        vendedor:   data.vendedor   || null,
+        negocio_id: data.negocio_id || null,
       }, client);
 
       for (const item of data.items) {
@@ -81,9 +82,10 @@ export default class RemitoService {
 
   async getById(id) {
     const { rows } = await pool.query(
-      `SELECT o.*, c.name AS customer_name
+      `SELECT o.*, c.name AS customer_name, u.name AS recipient_user_name
        FROM orders o
        LEFT JOIN customers c ON c.id = o.customer_id
+       LEFT JOIN users u ON u.id = o.recipient_user_id
        WHERE o.id = $1`,
       [id]
     );
@@ -138,8 +140,8 @@ export default class RemitoService {
         (acc, i) => acc + (i.unit_price || 0) * i.quantity, 0
       );
       await client.query(
-        `UPDATE orders SET origen=$1, destino=$2, customer_id=$3, price_type=$4, total=$5 WHERE id=$6`,
-        [data.origen || null, data.destino || null, data.customer_id || null, data.price_type || "precio_1", newTotal, id]
+        `UPDATE orders SET origen=$1, destino=$2, customer_id=$3, price_type=$4, total=$5, recipient_user_id=$6 WHERE id=$7`,
+        [data.origen || null, data.destino || null, data.customer_id || null, data.price_type || "precio_1", newTotal, data.recipient_user_id || null, id]
       );
 
       // 4. Reemplazar items

@@ -7,24 +7,25 @@ export default class OrderRepository {
       `INSERT INTO orders
         (customer_id, user_id, total, profit, status,
          tipo, vendedor, price_type, texto_libre,
-         origen, destino, supplier_id, warehouse_id, negocio_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         origen, destino, supplier_id, warehouse_id, negocio_id, recipient_user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        RETURNING *`,
       [
-        data.customer_id  || null,
-        data.user_id      || null,
+        data.customer_id       || null,
+        data.user_id           || null,
         data.total,
         data.profit,
         data.status,
-        data.tipo         || null,
-        data.vendedor     || null,
-        data.price_type   || null,
-        data.texto_libre  || null,
-        data.origen       || null,
-        data.destino      || null,
-        data.supplier_id  || null,
-        data.warehouse_id || null,
-        data.negocio_id   || null,
+        data.tipo              || null,
+        data.vendedor          || null,
+        data.price_type        || null,
+        data.texto_libre       || null,
+        data.origen            || null,
+        data.destino           || null,
+        data.supplier_id       || null,
+        data.warehouse_id      || null,
+        data.negocio_id        || null,
+        data.recipient_user_id || null,
       ]
     );
     return res.rows[0];
@@ -89,11 +90,13 @@ export default class OrderRepository {
         o.*,
         c.name  AS customer_name,
         pr.name AS supplier_name,
-        p.method AS payment_method
+        p.method AS payment_method,
+        u.name  AS recipient_user_name
       FROM orders o
       LEFT JOIN customers  c  ON c.id  = o.customer_id
       LEFT JOIN proveedores pr ON pr.id = o.supplier_id
       LEFT JOIN payments    p  ON p.order_id = o.id
+      LEFT JOIN users       u  ON u.id = o.recipient_user_id
       WHERE 1=1
     `;
     const params = [];

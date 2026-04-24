@@ -9,7 +9,7 @@ export default class CuentaCorrienteService {
   registrarPago(id, data)                    { return this.repo.registrarPago(id, data); }
   agregarSaldo(id, data)                     { return this.repo.agregarSaldo(id, data); }
   registrarCobranza(id, data)                { return this.repo.registrarCobranza(id, data); }
-  getCobranzas(from, to, negocioId)          { return this.repo.getCobranzas(from, to, negocioId); }
+  getCobranzas(from, to, negocioId, warehouseId) { return this.repo.getCobranzas(from, to, negocioId, warehouseId); }
   debitarPorComprobante(id, data, client, negocioId) {
     return this.repo.debitarPorComprobante(id, data, client, negocioId);
   }

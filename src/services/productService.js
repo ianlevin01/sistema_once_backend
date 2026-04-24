@@ -56,12 +56,9 @@ export default class ProductService {
     return Promise.all(
       products.map(async (product) => {
         const costo_usd = product.costo_usd ? Number(product.costo_usd) : null;
-        const prices = costo_usd
-          ? buildComputedPrices(costo_usd, config)
-          : (product.prices ?? []);
         return {
           ...product,
-          prices,
+          prices: buildComputedPrices(costo_usd, config),
           images: await this.addSignedUrlsToImages(product.images),
         };
       })
@@ -78,21 +75,10 @@ export default class ProductService {
     );
   }
 
-  async saveCostAndPrices(productId, p) {
-    const promises = [];
-
+  async saveCost(productId, p) {
     if (p.cost != null && p.cost !== "") {
-      promises.push(this.repo.insertCost(productId, p.cost));
+      await this.repo.insertCost(productId, p.cost);
     }
-
-    for (let n = 1; n <= 5; n++) {
-      const val = p[`price_${n}`];
-      if (val != null && val !== "") {
-        promises.push(this.repo.upsertPrice(productId, `precio_${n}`, val));
-      }
-    }
-
-    await Promise.all(promises);
   }
 
   async getCategories(negocioId) {
@@ -112,12 +98,9 @@ export default class ProductService {
     return Promise.all(
       products.map(async (product) => {
         const costo_usd = product.costo_usd ? Number(product.costo_usd) : null;
-        const prices = costo_usd
-          ? buildComputedPrices(costo_usd, config)
-          : (product.prices ?? []);
         return {
           ...product,
-          prices,
+          prices: buildComputedPrices(costo_usd, config),
           images: await this.addSignedUrlsToImages(product.images),
         };
       })
@@ -132,18 +115,13 @@ export default class ProductService {
     const cotizacion = Number(config.cotizacion_dolar || 0);
     const costoArs   = costo_usd != null ? costo_usd * cotizacion : null;
 
-    let prices = product.prices || product.product_prices || [];
-    if (costo_usd) {
-      prices = buildComputedPrices(costo_usd, config);
-    }
+    const prices = buildComputedPrices(costo_usd, config);
 
     const costoEntry = costo_usd != null
       ? { price_type: "costo", price: costoArs, price_usd: costo_usd, currency: "ARS" }
-      : (product.prices || []).find((p) => p.price_type === "costo") || null;
+      : null;
 
-    const allPrices = costoEntry
-      ? [costoEntry, ...prices.filter((p) => p.price_type !== "costo")]
-      : prices;
+    const allPrices = costoEntry ? [costoEntry, ...prices] : prices;
 
     const reservaRes = await pool.query(
       `SELECT stock_reserva FROM products WHERE id = $1`, [id]
@@ -163,7 +141,7 @@ export default class ProductService {
 
   async create(p, files, negocioId) {
     const product = await this.repo.create({ ...p, negocio_id: negocioId });
-    await this.saveCostAndPrices(product.id, p);
+    await this.saveCost(product.id, p);
 
     if (files?.length) {
       const uploads = await Promise.all(files.map((file) => this.s3.upload(file)));
@@ -175,7 +153,7 @@ export default class ProductService {
 
   async update(id, p, files, negocioId) {
     await this.repo.update(id, p);
-    await this.saveCostAndPrices(id, p);
+    await this.saveCost(id, p);
 
     const keepKeys =
       p.keepImages === undefined

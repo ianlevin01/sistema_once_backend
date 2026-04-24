@@ -11,10 +11,6 @@ export default class ProductRepository {
            FROM product_images pi WHERE pi.product_id = p.id), '[]'
         ) AS images,
         COALESCE(
-          (SELECT json_agg(json_build_object('price_type', pp.price_type, 'currency', pp.currency, 'price', pp.price) ORDER BY pp.price_type)
-           FROM product_prices pp WHERE pp.product_id = p.id), '[]'
-        ) AS prices,
-        COALESCE(
           (SELECT json_agg(json_build_object('warehouse_id', s.warehouse_id, 'quantity', s.quantity))
            FROM stock s WHERE s.product_id = p.id), '[]'
         ) AS stock
@@ -43,11 +39,7 @@ export default class ProductRepository {
     let orderClause;
     if (sort === "price_asc" || sort === "price_desc") {
       const dir = sort === "price_asc" ? "ASC" : "DESC";
-      orderClause = `(
-        SELECT pp.price FROM product_prices pp
-        WHERE pp.product_id = p.id AND pp.price_type = 'precio_1'
-        LIMIT 1
-      ) ${dir} NULLS LAST`;
+      orderClause = `p.costo_usd ${dir} NULLS LAST`;
     } else {
       orderClause = ORDER_MAP[sort] ?? "p.created_at DESC";
     }
@@ -65,21 +57,6 @@ export default class ProductRepository {
           ),
           '[]'
         ) AS images,
-
-        COALESCE(
-          (
-            SELECT json_agg(
-              json_build_object(
-                'price_type', pp.price_type,
-                'currency',   pp.currency,
-                'price',      pp.price
-              ) ORDER BY pp.price_type
-            )
-            FROM product_prices pp
-            WHERE pp.product_id = p.id
-          ),
-          '[]'
-        ) AS prices,
 
         COALESCE(
           (
@@ -135,22 +112,6 @@ export default class ProductRepository {
           ),
           '[]'
         ) AS images,
-
-        COALESCE(
-          (
-            SELECT json_agg(
-              json_build_object(
-                'id',         pp.id,
-                'price_type', pp.price_type,
-                'currency',   pp.currency,
-                'price',      pp.price
-              ) ORDER BY pp.price_type
-            )
-            FROM product_prices pp
-            WHERE pp.product_id = p.id
-          ),
-          '[]'
-        ) AS prices,
 
         COALESCE(
           (
@@ -325,22 +286,4 @@ export default class ProductRepository {
     );
   }
 
-  // ── Precios ─────────────────────────────────────────────────────────────────
-
-  async upsertPrice(productId, priceType, price, currency = "ARS") {
-    await pool.query(
-      `INSERT INTO product_prices (product_id, price_type, price, currency)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (product_id, price_type)
-       DO UPDATE SET price = EXCLUDED.price, currency = EXCLUDED.currency`,
-      [productId, priceType, price, currency]
-    );
-  }
-
-  async deletePricesByProduct(productId) {
-    await pool.query(
-      "DELETE FROM product_prices WHERE product_id=$1",
-      [productId]
-    );
-  }
 }
