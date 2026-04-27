@@ -16,7 +16,7 @@ export default class ProductRepository {
         ) AS stock
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
-      WHERE (p.name ILIKE $1 OR p.code ILIKE $1) AND p.negocio_id = $2
+      WHERE (p.name ILIKE $1 OR p.code ILIKE $1) AND p.negocio_id = $2 AND p.deleted_at IS NULL
       ORDER BY p.name
     `, [`%${name || ""}%`, negocioId]);
     return res.rows;
@@ -26,8 +26,8 @@ export default class ProductRepository {
     const params = categoryId ? [limit, offset, categoryId, negocioId] : [limit, offset, negocioId];
     const negocioParam = categoryId ? 4 : 3;
     const whereClause = categoryId
-      ? `WHERE p.category_id = $3 AND p.negocio_id = $${negocioParam}`
-      : `WHERE p.negocio_id = $${negocioParam}`;
+      ? `WHERE p.category_id = $3 AND p.negocio_id = $${negocioParam} AND p.deleted_at IS NULL`
+      : `WHERE p.negocio_id = $${negocioParam} AND p.deleted_at IS NULL`;
 
     const ORDER_MAP = {
       price_asc:  "price_asc",
@@ -154,7 +154,7 @@ export default class ProductRepository {
 
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
-      WHERE p.id = $1
+      WHERE p.id = $1 AND p.deleted_at IS NULL
     `, [id]);
 
     return res.rows[0];
@@ -250,8 +250,20 @@ export default class ProductRepository {
     return res.rows[0];
   }
 
-  async delete(id) {
-    await pool.query("DELETE FROM products WHERE id=$1", [id]);
+  async softDelete(id) {
+    await pool.query("UPDATE products SET deleted_at = NOW() WHERE id = $1", [id]);
+  }
+
+  async findDeletedByCode(code, negocioId) {
+    const res = await pool.query(
+      `SELECT id, name, code FROM products WHERE code = $1 AND negocio_id = $2 AND deleted_at IS NOT NULL LIMIT 1`,
+      [code, negocioId]
+    );
+    return res.rows[0] || null;
+  }
+
+  async deleteStockByProduct(productId) {
+    await pool.query("DELETE FROM stock WHERE product_id = $1", [productId]);
   }
 
   // ── Imágenes ────────────────────────────────────────────────────────────────

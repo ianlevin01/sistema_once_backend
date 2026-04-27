@@ -99,17 +99,19 @@ export default class CuentaCorrienteRepository {
         c.document AS customer_document,
         c.email    AS customer_email,
         c.phone    AS customer_phone,
-        (
-          SELECT MAX(m.created_at) FROM cc_movimientos m
-          WHERE m.cuenta_corriente_id = cc.id AND m.tipo = 'debito'
-        ) AS ultimo_debito,
-        (
-          SELECT MAX(m.created_at) FROM cc_movimientos m
-          WHERE m.cuenta_corriente_id = cc.id AND m.tipo = 'pago'
-        ) AS ultimo_pago
+        agg.ultimo_debito,
+        agg.ultimo_pago
       FROM cuentas_corrientes cc
       JOIN customers c ON c.id = cc.customer_id
+      LEFT JOIN LATERAL (
+        SELECT
+          MAX(m.created_at) FILTER (WHERE m.tipo = 'debito') AS ultimo_debito,
+          MAX(m.created_at) FILTER (WHERE m.tipo = 'pago')   AS ultimo_pago
+        FROM cc_movimientos m
+        WHERE m.cuenta_corriente_id = cc.id
+      ) agg ON true
       WHERE c.negocio_id = $1
+        AND cc.saldo <> 0
       ORDER BY c.name ASC
     `, [negocioId]);
     return res.rows;

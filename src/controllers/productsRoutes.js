@@ -65,6 +65,7 @@ router.post("/", requireAuth, upload.array("images"), async (req, res) => {
     const result = await svc.create(req.body, req.files, req.user.negocio_id);
     return res.status(201).json(result);
   } catch (err) {
+    if (err.code === "DELETED_PRODUCT_CODE") return res.status(409).json({ message: err.message, deleted: true });
     if (err.code === "23505") return res.status(409).json({ message: "Ya existe un producto con ese código" });
     console.error("Error POST /products:", err);
     return res.status(500).json({ message: "Error interno" });

@@ -140,6 +140,14 @@ export default class ProductService {
   }
 
   async create(p, files, negocioId) {
+    if (p.code) {
+      const deleted = await this.repo.findDeletedByCode(p.code, negocioId);
+      if (deleted) {
+        const err = new Error(`El código "${p.code}" corresponde a un producto que fue eliminado anteriormente.`);
+        err.code = "DELETED_PRODUCT_CODE";
+        throw err;
+      }
+    }
     const product = await this.repo.create({ ...p, negocio_id: negocioId });
     await this.saveCost(product.id, p);
 
@@ -185,10 +193,11 @@ export default class ProductService {
 
   async delete(id) {
     const product = await this.repo.getById(id);
-    if (product.images?.length) {
+    if (product?.images?.length) {
       await Promise.all(product.images.map((img) => this.s3.delete(img.key)));
     }
     await this.repo.deleteImagesByProduct(id);
-    await this.repo.delete(id);
+    await this.repo.deleteStockByProduct(id);
+    await this.repo.softDelete(id);
   }
 }

@@ -131,6 +131,11 @@ export default class ComprobanteService {
       }, orderRow.id, client);
 
       // ── CC cliente: presupuesto con Cta Cte → debitar ───────
+      // Auto-crear la CC si el cliente aún no tiene una
+      if (esCuentaCorriente && data.customer_id && !data.es_consumidor_final) {
+        await this.ccRepo.createCC(data.customer_id, client);
+      }
+
       // debitarPorComprobante espera el total en ARS (hace la conversión internamente)
       if (esPresupuesto && esCuentaCorriente && data.customer_id && !data.es_consumidor_final) {
         await this.ccRepo.debitarPorComprobante(

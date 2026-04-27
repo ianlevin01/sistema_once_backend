@@ -44,6 +44,24 @@ export default class ProveedorRepository {
     return res.rows;
   }
 
+  async getCCSummary(negocioId) {
+    const res = await pool.query(`
+      SELECT
+        p.id,
+        p.name,
+        p.document,
+        p.divisa,
+        COALESCE(cc.saldo, 0)                AS saldo,
+        COALESCE(cc.divisa, p.divisa, 'ARS') AS cc_divisa
+      FROM proveedores p
+      LEFT JOIN cuentas_corrientes_prov cc ON cc.proveedor_id = p.id
+      WHERE p.negocio_id = $1
+        AND COALESCE(cc.saldo, 0) <> 0
+      ORDER BY p.name ASC
+    `, [negocioId]);
+    return res.rows;
+  }
+
   async getById(id) {
     const res = await pool.query(`SELECT * FROM proveedores WHERE id = $1`, [id]);
     return res.rows[0] || null;

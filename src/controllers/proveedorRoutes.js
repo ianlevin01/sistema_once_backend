@@ -29,6 +29,17 @@ router.get("/", requireAuth, async (req, res) => {
   }
 });
 
+// Resumen de CC de todos los proveedores (saldo + divisa en una sola query)
+router.get("/cc-summary", requireAuth, async (req, res) => {
+  try {
+    const result = await repo.getCCSummary(req.user.negocio_id);
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("GET /proveedores/cc-summary:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
 // Por ID
 router.get("/:id", requireAuth, async (req, res) => {
   try {
