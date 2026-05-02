@@ -28,6 +28,7 @@ router.get("/", requireAuth, async (_req, res) => {
 router.post("/", requireAuth, async (req, res) => {
   const { name, email, password, role, warehouse_id } = req.body;
   if (!name?.trim())     return res.status(400).json({ message: "Nombre requerido" });
+  if (!email?.trim())    return res.status(400).json({ message: "Email requerido" });
   if (!password?.trim()) return res.status(400).json({ message: "Contraseña requerida" });
   if (!role?.trim())     return res.status(400).json({ message: "Rol requerido" });
 
@@ -37,7 +38,7 @@ router.post("/", requireAuth, async (req, res) => {
       `INSERT INTO users (name, email, password_hash, role, warehouse_id, active, negocio_id)
        VALUES ($1, $2, $3, $4, $5, true, $6)
        RETURNING id, name, email, role, warehouse_id, active, created_at`,
-      [name.trim(), email?.trim() || null, hash, role.trim(), warehouse_id || null, req.user.negocio_id]
+      [name.trim(), email.trim().toLowerCase(), hash, role.trim(), warehouse_id || null, req.user.negocio_id]
     );
     const row = result.rows[0];
     if (row.warehouse_id) {
