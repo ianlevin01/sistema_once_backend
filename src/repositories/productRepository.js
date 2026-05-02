@@ -26,8 +26,8 @@ export default class ProductRepository {
     const params = categoryId ? [limit, offset, categoryId, negocioId] : [limit, offset, negocioId];
     const negocioParam = categoryId ? 4 : 3;
     const whereClause = categoryId
-      ? `WHERE p.category_id = $3 AND p.negocio_id = $${negocioParam} AND p.deleted_at IS NULL`
-      : `WHERE p.negocio_id = $${negocioParam} AND p.deleted_at IS NULL`;
+      ? `WHERE p.category_id = $3 AND p.negocio_id = $${negocioParam} AND p.deleted_at IS NULL AND p.active = true`
+      : `WHERE p.negocio_id = $${negocioParam} AND p.deleted_at IS NULL AND p.active = true`;
 
     const ORDER_MAP = {
       price_asc:  "price_asc",
