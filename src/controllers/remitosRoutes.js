@@ -1,4 +1,5 @@
 import { Router } from "express";
+import bcrypt from "bcryptjs";
 import pool from "../database/db.js";
 import RemitoService from "../services/remitoService.js";
 import { requireAuth } from "./authRoutes.js";
@@ -60,11 +61,11 @@ router.delete("/:id", requireAuth, async (req, res) => {
     const { password } = req.body;
     if (!password) return res.status(400).json({ message: "Se requiere clave para eliminar" });
     const { rows } = await pool.query(
-      "SELECT delete_password FROM negocios WHERE id = $1", [req.user.negocio_id]
+      "SELECT password_hash FROM users WHERE negocio_id = $1 AND active = true",
+      [req.user.negocio_id]
     );
-    if (!rows[0]?.delete_password || password !== rows[0].delete_password) {
-      return res.status(403).json({ message: "Clave incorrecta" });
-    }
+    const valid = (await Promise.all(rows.map((u) => bcrypt.compare(password, u.password_hash)))).some(Boolean);
+    if (!valid) return res.status(403).json({ message: "Clave incorrecta" });
     await svc.delete(req.params.id);
     return res.status(200).json({ message: "Remito eliminado" });
   } catch (err) {
