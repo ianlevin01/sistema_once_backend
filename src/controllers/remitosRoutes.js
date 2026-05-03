@@ -1,4 +1,5 @@
 import { Router } from "express";
+import pool from "../database/db.js";
 import RemitoService from "../services/remitoService.js";
 import { requireAuth } from "./authRoutes.js";
 
@@ -54,8 +55,16 @@ router.put("/:id", requireAuth, async (req, res) => {
 });
 
 // Eliminar remito
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireAuth, async (req, res) => {
   try {
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ message: "Se requiere clave para eliminar" });
+    const { rows } = await pool.query(
+      "SELECT delete_password FROM negocios WHERE id = $1", [req.user.negocio_id]
+    );
+    if (!rows[0]?.delete_password || password !== rows[0].delete_password) {
+      return res.status(403).json({ message: "Clave incorrecta" });
+    }
     await svc.delete(req.params.id);
     return res.status(200).json({ message: "Remito eliminado" });
   } catch (err) {
