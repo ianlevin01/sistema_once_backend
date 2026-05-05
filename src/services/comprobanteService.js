@@ -913,16 +913,15 @@ export default class ComprobanteService {
         ORDER BY o.created_at DESC
       `, reposParams);
 
-      const reposConItems = await Promise.all(
-        reposRes.rows.map(async (r) => {
-          const itemsRes = await client.query(`
-            SELECT oi.*, p.name, p.code
-            FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id
-            WHERE oi.order_id = $1
-          `, [r.id]);
-          return { ...r, items: itemsRes.rows };
-        })
-      );
+      const reposConItems = [];
+      for (const r of reposRes.rows) {
+        const itemsRes = await client.query(`
+          SELECT oi.*, p.name, p.code
+          FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id
+          WHERE oi.order_id = $1
+        `, [r.id]);
+        reposConItems.push({ ...r, items: itemsRes.rows });
+      }
 
       // ── Notas de Pedido (sin filtro de fecha — siempre todas) ──
       const notasParams = [];
@@ -941,16 +940,15 @@ export default class ComprobanteService {
         ORDER BY o.created_at DESC
       `, notasParams);
 
-      const notasConItems = await Promise.all(
-        notasRes.rows.map(async (nota) => {
-          const itemsRes = await client.query(`
-            SELECT oi.*, p.name, p.code
-            FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id
-            WHERE oi.order_id = $1
-          `, [nota.id]);
-          return { ...nota, items: itemsRes.rows };
-        })
-      );
+      const notasConItems = [];
+      for (const nota of notasRes.rows) {
+        const itemsRes = await client.query(`
+          SELECT oi.*, p.name, p.code
+          FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id
+          WHERE oi.order_id = $1
+        `, [nota.id]);
+        notasConItems.push({ ...nota, items: itemsRes.rows });
+      }
 
       // ── Remitos ──────────────────────────────────────────────
       const remitosParams = [dateFrom, dateTo];
@@ -967,16 +965,15 @@ export default class ComprobanteService {
         ORDER BY o.created_at DESC
       `, remitosParams);
 
-      const remitosConItems = await Promise.all(
-        remitosRes.rows.map(async (r) => {
-          const itemsRes = await client.query(`
-            SELECT oi.*, p.name, p.code
-            FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id
-            WHERE oi.order_id = $1
-          `, [r.id]);
-          return { ...r, items: itemsRes.rows };
-        })
-      );
+      const remitosConItems = [];
+      for (const r of remitosRes.rows) {
+        const itemsRes = await client.query(`
+          SELECT oi.*, p.name, p.code
+          FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id
+          WHERE oi.order_id = $1
+        `, [r.id]);
+        remitosConItems.push({ ...r, items: itemsRes.rows });
+      }
 
       return {
         presupuestos: presRes.rows,
