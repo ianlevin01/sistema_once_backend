@@ -42,7 +42,8 @@ router.post("/categories", requireAuth, async (req, res) => {
 // Buscar productos
 router.get("/search", resolveNegocio, async (req, res) => {
   const { name } = req.query;
-  const result = await svc.search(name, req.user.negocio_id);
+  const isShop = !req.user.id; // shop uses ?negocio_id= param, ERP uses JWT (has user.id)
+  const result = await svc.search(name, req.user.negocio_id, isShop);
   return res.status(200).json(result);
 });
 

@@ -58,9 +58,9 @@ export default class ProductService {
     } catch {}
   }
 
-  async search(name, negocioId) {
+  async search(name, negocioId, useVector = false) {
     let queryEmbedding = null;
-    if (name?.trim()) {
+    if (useVector && name?.trim()) {
       try { queryEmbedding = await generateEmbedding(name.trim()); } catch {}
     }
     const [products, config] = await Promise.all([

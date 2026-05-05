@@ -23,6 +23,7 @@ export default class ProductRepository {
         ${SELECT}
         WHERE p.negocio_id = $1 AND p.deleted_at IS NULL AND p.active = true
           AND p.embedding IS NOT NULL
+          AND (p.embedding <=> $2) < 0.65
         ORDER BY p.embedding <=> $2
         LIMIT 30
       `, [negocioId, JSON.stringify(queryEmbedding)]);
