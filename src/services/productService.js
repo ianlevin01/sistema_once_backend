@@ -1,6 +1,7 @@
 import ProductRepository from "../repositories/productRepository.js";
 import S3Service from "./S3Service.js";
 import pool from "../database/db.js";
+import { generateEmbedding, productToText } from "./embeddingService.js";
 
 // ── Caché de config de precios por negocio (60s) ─────────────────────────────
 const _configCache = new Map(); // negocio_id → { config, ts }
@@ -47,9 +48,23 @@ export default class ProductService {
   repo = new ProductRepository();
   s3   = new S3Service();
 
+  async _updateEmbedding(product) {
+    try {
+      const embedding = await generateEmbedding(productToText(product));
+      await pool.query(
+        "UPDATE products SET embedding = $1 WHERE id = $2",
+        [JSON.stringify(embedding), product.id]
+      );
+    } catch {}
+  }
+
   async search(name, negocioId) {
+    let queryEmbedding = null;
+    if (name?.trim()) {
+      try { queryEmbedding = await generateEmbedding(name.trim()); } catch {}
+    }
     const [products, config] = await Promise.all([
-      this.repo.search(name, negocioId),
+      this.repo.search(name, negocioId, queryEmbedding),
       getPriceConfig(negocioId),
     ]);
 
@@ -156,7 +171,9 @@ export default class ProductService {
       await Promise.all(uploads.map((key) => this.repo.insertImage(product.id, key)));
     }
 
-    return this.getById(product.id, negocioId);
+    const full = await this.getById(product.id, negocioId);
+    this._updateEmbedding(full);
+    return full;
   }
 
   async update(id, p, files, negocioId) {
@@ -188,7 +205,9 @@ export default class ProductService {
       await Promise.all(uploads.map((key) => this.repo.insertImage(id, key)));
     }
 
-    return this.getById(id, negocioId);
+    const full = await this.getById(id, negocioId);
+    this._updateEmbedding(full);
+    return full;
   }
 
   async delete(id) {

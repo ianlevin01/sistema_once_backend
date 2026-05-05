@@ -1,8 +1,8 @@
 import pool from "../database/db.js"
 
 export default class ProductRepository {
-  async search(name, negocioId) {
-    const res = await pool.query(`
+  async search(name, negocioId, queryEmbedding = null) {
+    const SELECT = `
       SELECT
         p.*,
         c.name AS category_name,
@@ -16,6 +16,21 @@ export default class ProductRepository {
         ) AS stock
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
+    `;
+
+    if (queryEmbedding) {
+      const res = await pool.query(`
+        ${SELECT}
+        WHERE p.negocio_id = $1 AND p.deleted_at IS NULL AND p.active = true
+          AND p.embedding IS NOT NULL
+        ORDER BY p.embedding <=> $2
+        LIMIT 30
+      `, [negocioId, JSON.stringify(queryEmbedding)]);
+      return res.rows;
+    }
+
+    const res = await pool.query(`
+      ${SELECT}
       WHERE (p.name ILIKE $1 OR p.code ILIKE $1) AND p.negocio_id = $2 AND p.deleted_at IS NULL
       ORDER BY p.name
     `, [`%${name || ""}%`, negocioId]);
