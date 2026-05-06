@@ -47,6 +47,26 @@ router.get("/search", resolveNegocio, async (req, res) => {
   return res.status(200).json(result);
 });
 
+// ── Price overrides por producto ──────────────────────────────
+router.get("/:id/price-overrides", requireAuth, async (req, res) => {
+  const result = await svc.getOverride(req.params.id);
+  return res.status(200).json(result);
+});
+
+router.put("/:id/price-overrides", requireAuth, async (req, res) => {
+  try {
+    const result = await svc.setOverride(req.params.id, req.body);
+    return res.status(200).json(result);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+router.delete("/:id/price-overrides", requireAuth, async (req, res) => {
+  await svc.removeOverride(req.params.id);
+  return res.status(200).json({ message: "Override eliminado" });
+});
+
 // Obtener producto por id
 router.get("/:id", resolveNegocio, async (req, res) => {
   const result = await svc.getById(req.params.id, req.user.negocio_id);

@@ -21,8 +21,8 @@ export default class ComprobanteService {
     try {
       await client.query("BEGIN");
 
-      // total en ARS: siempre se calcula de los unit_price del frontend (que están en ARS)
-      const totalARS = data.items.reduce((acc, i) => acc + i.unit_price * i.quantity, 0);
+      // Total raw desde el frontend (puede estar en ARS o en USD según divisa del comprobante)
+      const totalRaw = data.items.reduce((acc, i) => acc + i.unit_price * i.quantity, 0);
 
       // ── Tipo final ──────────────────────────────────────────
       let tipoFinal = data.tipo || "Presupuesto";
@@ -80,13 +80,22 @@ export default class ComprobanteService {
       }
 
       // ── Cotización y total en divisa del comprobante ────────
-      // Los unit_price del frontend siempre vienen en ARS.
-      // Si la divisa del comprobante es USD, guardamos el total en USD.
+      // Cuando divisa=USD el frontend envía precios en USD (price_usd).
+      // Necesitamos convertirlos a ARS para almacenamiento y lógica interna.
       const cotizRes = await client.query(
         `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
         [data.negocio_id]
       );
       const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
+
+      const preciosEnUSD = divisa === "USD";
+      const totalARS = preciosEnUSD
+        ? Math.round(totalRaw * cotizacion * 100) / 100
+        : totalRaw;
+      const itemsParaGuardar = preciosEnUSD
+        ? data.items.map((i) => ({ ...i, unit_price: Math.round(i.unit_price * cotizacion * 100) / 100 }))
+        : data.items;
+
       const total = divisa === "USD"
         ? Math.round((totalARS / cotizacion) * 100) / 100
         : totalARS;
@@ -119,7 +128,7 @@ export default class ComprobanteService {
       ]);
       const orderRow = order.rows[0];
 
-      for (const item of data.items) {
+      for (const item of itemsParaGuardar) {
         await this.itemRepo.create(item, orderRow.id, client);
       }
 
@@ -926,14 +935,16 @@ export default class ComprobanteService {
       // ── Notas de Pedido (sin filtro de fecha — siempre todas) ──
       const notasParams = [];
       const notasNegocioFilter = negocioId ? ` AND o.negocio_id = $${notasParams.push(negocioId)}` : "";
-      const notasWhFilter = warehouseId ? ` AND o.warehouse_id = $${notasParams.push(warehouseId)}` : "";
+      const notasWhFilter = warehouseId ? ` AND (o.warehouse_id = $${notasParams.push(warehouseId)} OR o.tipo = 'Nota de Pedido Web')` : "";
       const notasRes = await client.query(`
         SELECT o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
                o.customer_id, o.price_type, c.name AS customer_name,
-               pm.method AS payment_method
+               pm.method AS payment_method,
+               wo.numero AS web_order_numero
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN payments pm ON pm.order_id = o.id
+        LEFT JOIN web_orders wo ON wo.order_id = o.id
         WHERE o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
           ${notasNegocioFilter}
           ${notasWhFilter}

@@ -6,6 +6,11 @@ export default class ProductRepository {
       SELECT
         p.*,
         c.name AS category_name,
+        ppo.pct_1 AS ovr_pct_1,
+        ppo.pct_2 AS ovr_pct_2,
+        ppo.pct_3 AS ovr_pct_3,
+        ppo.pct_4 AS ovr_pct_4,
+        ppo.pct_5 AS ovr_pct_5,
         COALESCE(
           (SELECT json_agg(json_build_object('id', pi.id, 'key', pi.key) ORDER BY pi.created_at)
            FROM product_images pi WHERE pi.product_id = p.id), '[]'
@@ -16,6 +21,7 @@ export default class ProductRepository {
         ) AS stock
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN product_price_overrides ppo ON ppo.product_id = p.id
     `;
 
     if (queryEmbedding) {
@@ -30,11 +36,21 @@ export default class ProductRepository {
       return res.rows;
     }
 
+    if (!name?.trim()) {
+      const res = await pool.query(`
+        ${SELECT}
+        WHERE p.negocio_id = $1 AND p.deleted_at IS NULL AND p.active = true
+        ORDER BY p.seccion ASC, p.peso DESC, p.name
+        LIMIT 20
+      `, [negocioId]);
+      return res.rows;
+    }
+
     const res = await pool.query(`
       ${SELECT}
       WHERE (p.name ILIKE $1 OR p.code ILIKE $1) AND p.negocio_id = $2 AND p.deleted_at IS NULL
       ORDER BY p.seccion ASC, p.peso DESC, p.name
-    `, [`%${name || ""}%`, negocioId]);
+    `, [`%${name}%`, negocioId]);
     return res.rows;
   }
 
@@ -64,6 +80,11 @@ export default class ProductRepository {
       SELECT
         p.*,
         c.name AS category_name,
+        ppo.pct_1 AS ovr_pct_1,
+        ppo.pct_2 AS ovr_pct_2,
+        ppo.pct_3 AS ovr_pct_3,
+        ppo.pct_4 AS ovr_pct_4,
+        ppo.pct_5 AS ovr_pct_5,
 
         COALESCE(
           (
@@ -85,6 +106,7 @@ export default class ProductRepository {
 
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN product_price_overrides ppo ON ppo.product_id = p.id
       ${whereClause}
       ORDER BY ${orderClause}
       LIMIT $1 OFFSET $2
@@ -114,6 +136,11 @@ export default class ProductRepository {
       SELECT
         p.*,
         c.name AS category_name,
+        ppo.pct_1 AS ovr_pct_1,
+        ppo.pct_2 AS ovr_pct_2,
+        ppo.pct_3 AS ovr_pct_3,
+        ppo.pct_4 AS ovr_pct_4,
+        ppo.pct_5 AS ovr_pct_5,
 
         COALESCE(
           (
@@ -170,6 +197,7 @@ export default class ProductRepository {
 
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN product_price_overrides ppo ON ppo.product_id = p.id
       WHERE p.id = $1 AND p.deleted_at IS NULL
     `, [id]);
 
@@ -328,6 +356,36 @@ export default class ProductRepository {
       "INSERT INTO product_costs (product_id, cost) VALUES ($1, $2)",
       [productId, cost]
     );
+  }
+
+  // ── Price overrides ─────────────────────────────────────────────────────────
+
+  async getOverride(productId) {
+    const res = await pool.query(
+      "SELECT * FROM product_price_overrides WHERE product_id = $1",
+      [productId]
+    );
+    return res.rows[0] || null;
+  }
+
+  async upsertOverride(productId, data) {
+    const res = await pool.query(
+      `INSERT INTO product_price_overrides (product_id, pct_1, pct_2, pct_3, pct_4, pct_5)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (product_id) DO UPDATE SET
+         pct_1 = EXCLUDED.pct_1,
+         pct_2 = EXCLUDED.pct_2,
+         pct_3 = EXCLUDED.pct_3,
+         pct_4 = EXCLUDED.pct_4,
+         pct_5 = EXCLUDED.pct_5
+       RETURNING *`,
+      [productId, data.pct_1 ?? null, data.pct_2 ?? null, data.pct_3 ?? null, data.pct_4 ?? null, data.pct_5 ?? null]
+    );
+    return res.rows[0];
+  }
+
+  async deleteOverride(productId) {
+    await pool.query("DELETE FROM product_price_overrides WHERE product_id = $1", [productId]);
   }
 
 }

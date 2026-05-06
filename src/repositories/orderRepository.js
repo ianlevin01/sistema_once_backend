@@ -91,12 +91,14 @@ export default class OrderRepository {
         c.name  AS customer_name,
         pr.name AS supplier_name,
         p.method AS payment_method,
-        u.name  AS recipient_user_name
+        u.name  AS recipient_user_name,
+        wo.numero AS web_order_numero
       FROM orders o
       LEFT JOIN customers  c  ON c.id  = o.customer_id
       LEFT JOIN proveedores pr ON pr.id = o.supplier_id
       LEFT JOIN payments    p  ON p.order_id = o.id
       LEFT JOIN users       u  ON u.id = o.recipient_user_id
+      LEFT JOIN web_orders  wo ON wo.order_id = o.id
       WHERE 1=1
     `;
     const params = [];
@@ -105,7 +107,7 @@ export default class OrderRepository {
     if (tipo)        { params.push(tipo);                   query += ` AND o.tipo = $${params.length}`; }
     if (from)        { params.push(`${from} 00:00:00`);    query += ` AND o.created_at >= $${params.length}`; }
     if (to)          { params.push(`${to} 23:59:59`);      query += ` AND o.created_at <= $${params.length}`; }
-    if (warehouseId) { params.push(warehouseId);            query += ` AND o.warehouse_id = $${params.length}`; }
+    if (warehouseId) { params.push(warehouseId);            query += ` AND (o.warehouse_id = $${params.length} OR o.tipo = 'Nota de Pedido Web')`; }
 
     query += ` ORDER BY o.created_at DESC`;
 

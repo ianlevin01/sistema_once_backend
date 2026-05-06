@@ -24,15 +24,19 @@ export function invalidatePriceConfigCache(negocioId) {
   else           _configCache.clear();
 }
 
-// Construye el array de precios calculados desde costo_usd
-function buildComputedPrices(costo_usd, config) {
+// Construye el array de precios calculados desde costo_usd.
+// overrides: objeto con pct_1..pct_5 opcionales (null = usar global)
+function buildComputedPrices(costo_usd, config, overrides = null) {
   if (!costo_usd || !config) return [];
   const cotizacion = Number(config.cotizacion_dolar || 0);
   const costoUsd   = Number(costo_usd);
   const costoArs   = costoUsd * cotizacion;
 
   return [1, 2, 3, 4, 5].map((n) => {
-    const pct    = Number(config[`pct_${n}`] || 0);
+    const ovrPct = overrides?.[`pct_${n}`];
+    const pct    = (ovrPct !== null && ovrPct !== undefined)
+      ? Number(ovrPct)
+      : Number(config[`pct_${n}`] || 0);
     const factor = 1 + pct / 100;
     return {
       price_type: `precio_${n}`,
@@ -42,6 +46,19 @@ function buildComputedPrices(costo_usd, config) {
       currency:   "ARS",
     };
   });
+}
+
+function extractOverrides(product) {
+  if (product.ovr_pct_1 == null && product.ovr_pct_2 == null &&
+      product.ovr_pct_3 == null && product.ovr_pct_4 == null &&
+      product.ovr_pct_5 == null) return null;
+  return {
+    pct_1: product.ovr_pct_1,
+    pct_2: product.ovr_pct_2,
+    pct_3: product.ovr_pct_3,
+    pct_4: product.ovr_pct_4,
+    pct_5: product.ovr_pct_5,
+  };
 }
 
 export default class ProductService {
@@ -71,9 +88,11 @@ export default class ProductService {
     return Promise.all(
       products.map(async (product) => {
         const costo_usd = product.costo_usd ? Number(product.costo_usd) : null;
+        const overrides = extractOverrides(product);
         return {
           ...product,
-          prices: buildComputedPrices(costo_usd, config),
+          prices: buildComputedPrices(costo_usd, config, overrides),
+          has_price_override: overrides !== null,
           images: await this.addSignedUrlsToImages(product.images),
         };
       })
@@ -113,9 +132,11 @@ export default class ProductService {
     return Promise.all(
       products.map(async (product) => {
         const costo_usd = product.costo_usd ? Number(product.costo_usd) : null;
+        const overrides = extractOverrides(product);
         return {
           ...product,
-          prices: buildComputedPrices(costo_usd, config),
+          prices: buildComputedPrices(costo_usd, config, overrides),
+          has_price_override: overrides !== null,
           images: await this.addSignedUrlsToImages(product.images),
         };
       })
@@ -129,8 +150,9 @@ export default class ProductService {
     const costo_usd  = product.costo_usd ? Number(product.costo_usd) : null;
     const cotizacion = Number(config.cotizacion_dolar || 0);
     const costoArs   = costo_usd != null ? costo_usd * cotizacion : null;
+    const overrides  = extractOverrides(product);
 
-    const prices = buildComputedPrices(costo_usd, config);
+    const prices = buildComputedPrices(costo_usd, config, overrides);
 
     const costoEntry = costo_usd != null
       ? { price_type: "costo", price: costoArs, price_usd: costo_usd, currency: "ARS" }
@@ -145,11 +167,17 @@ export default class ProductService {
 
     return {
       ...product,
-      prices:           allPrices,
-      product_prices:   allPrices,
+      prices:             allPrices,
+      product_prices:     allPrices,
       stock_reserva,
       costo_usd,
-      cotizacion_dolar: cotizacion,
+      cotizacion_dolar:   cotizacion,
+      has_price_override: overrides !== null,
+      global_pct_1:       Number(config.pct_1 || 0),
+      global_pct_2:       Number(config.pct_2 || 0),
+      global_pct_3:       Number(config.pct_3 || 0),
+      global_pct_4:       Number(config.pct_4 || 0),
+      global_pct_5:       Number(config.pct_5 || 0),
       images: await this.addSignedUrlsToImages(product.images),
     };
   }
@@ -223,4 +251,9 @@ export default class ProductService {
     await this.repo.deleteStockByProduct(id);
     await this.repo.softDelete(id);
   }
+
+  // ── Price overrides ────────────────────────────────────────────
+  getOverride(id)         { return this.repo.getOverride(id); }
+  setOverride(id, data)   { return this.repo.upsertOverride(id, data); }
+  removeOverride(id)      { return this.repo.deleteOverride(id); }
 }
