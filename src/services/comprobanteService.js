@@ -997,6 +997,32 @@ export default class ComprobanteService {
     }
   }
 
+  async getUltimasCompras({ negocioId, from, to } = {}) {
+    const params = [negocioId];
+    let dateFilter = "";
+    if (from) { params.push(`${from} 00:00:00`); dateFilter += ` AND o.created_at >= $${params.length}`; }
+    if (to)   { params.push(`${to} 23:59:59`);   dateFilter += ` AND o.created_at <= $${params.length}`; }
+    const { rows } = await pool.query(`
+      SELECT
+        o.created_at          AS fecha,
+        p.code                AS codigo,
+        p.name                AS descripcion,
+        oi.quantity           AS cantidad,
+        oi.unit_price         AS precio,
+        pr.name               AS proveedor,
+        o.id                  AS order_id
+      FROM order_items oi
+      JOIN orders o      ON o.id  = oi.order_id
+      JOIN products p    ON p.id  = oi.product_id
+      LEFT JOIN proveedores pr ON pr.id = o.supplier_id
+      WHERE o.tipo = 'Reposicion' AND o.negocio_id = $1
+        ${dateFilter}
+      ORDER BY o.created_at DESC
+      LIMIT 500
+    `, params);
+    return rows;
+  }
+
   async getLastSalePrice(customerId, productId) {
     return this.orderRepo.getLastSalePrice(customerId, productId);
   }

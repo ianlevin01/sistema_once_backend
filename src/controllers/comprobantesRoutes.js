@@ -100,6 +100,13 @@ router.get("/warehouses", requireAuth, async (req, res) => {
   }
 });
 
+// ── Últimas compras (reposiciones de stock) ───────────────────
+router.get("/ultimas-compras", requireAuth, async (req, res) => {
+  const { from, to } = req.query;
+  const result = await svc.getUltimasCompras({ negocioId: req.user.negocio_id, from, to });
+  return res.status(200).json(result);
+});
+
 // ── Obtener comprobante por ID ────────────────────────────────
 router.get("/:id", requireAuth, async (req, res) => {
   const result = await svc.getById(req.params.id);
