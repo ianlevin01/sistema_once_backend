@@ -16,11 +16,10 @@ export default class AIService {
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     const productContext = products.map((p) => ({
-      id:          p.id,
-      name:        p.name,
-      code:        p.code || "",
-      description: p.description || "",
-      category:    p.category_name || "",
+      id:       p.id,
+      name:     p.name,
+      desc:     (p.description || "").slice(0, 120),
+      category: p.category_name || "",
     }));
 
     const systemPrompt = `Sos un asistente de e-commerce de Oncepuntos.
