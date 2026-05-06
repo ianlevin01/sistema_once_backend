@@ -11,14 +11,14 @@ export default class AIService {
   async chat(userMessage, negocioId, baseUrl) {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    const products = await this.repo.search("", negocioId);
+    const all = await this.repo.search("", negocioId);
+    const products = all.filter((p) => p.active === true);
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     const productContext = products.map((p) => ({
       id:       p.id,
       name:     p.name,
-      desc:     (p.description || "").slice(0, 120),
       category: p.category_name || "",
     }));
 
