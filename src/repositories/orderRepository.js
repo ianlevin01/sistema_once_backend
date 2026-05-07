@@ -107,7 +107,7 @@ export default class OrderRepository {
     if (tipo)        { params.push(tipo);                   query += ` AND o.tipo = $${params.length}`; }
     if (from)        { params.push(`${from} 00:00:00`);    query += ` AND o.created_at >= $${params.length}`; }
     if (to)          { params.push(`${to} 23:59:59`);      query += ` AND o.created_at <= $${params.length}`; }
-    if (warehouseId) { params.push(warehouseId);            query += ` AND (o.warehouse_id = $${params.length} OR o.tipo = 'Nota de Pedido Web')`; }
+    if (warehouseId) { params.push(warehouseId);            query += ` AND (o.warehouse_id = $${params.length} OR o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web'))`; }
 
     query += ` ORDER BY o.created_at DESC`;
 

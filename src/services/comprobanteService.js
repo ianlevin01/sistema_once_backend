@@ -935,7 +935,7 @@ export default class ComprobanteService {
       // ── Notas de Pedido (sin filtro de fecha — siempre todas) ──
       const notasParams = [];
       const notasNegocioFilter = negocioId ? ` AND o.negocio_id = $${notasParams.push(negocioId)}` : "";
-      const notasWhFilter = warehouseId ? ` AND (o.warehouse_id = $${notasParams.push(warehouseId)} OR o.tipo = 'Nota de Pedido Web')` : "";
+      const notasWhFilter = warehouseId ? ` AND (o.warehouse_id = $${notasParams.push(warehouseId)} OR o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web'))` : "";
       const notasRes = await client.query(`
         SELECT o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
                o.customer_id, o.price_type, c.name AS customer_name,
