@@ -191,11 +191,7 @@ export default class ProductService {
         throw err;
       }
     }
-    const seccion = Number(p.seccion) || 1;
-    const peso = p.peso != null && p.peso !== ""
-      ? Number(p.peso)
-      : (await this.repo.getMaxPeso(negocioId, seccion)) + 10;
-    const product = await this.repo.create({ ...p, negocio_id: negocioId, seccion, peso });
+    const product = await this.repo.create({ ...p, negocio_id: negocioId });
     await this.saveCost(product.id, p);
 
     if (files?.length) {

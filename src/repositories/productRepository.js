@@ -40,7 +40,7 @@ export default class ProductRepository {
       const res = await pool.query(`
         ${SELECT}
         WHERE p.negocio_id = $1 AND p.deleted_at IS NULL AND p.active = true
-        ORDER BY p.seccion ASC, p.peso DESC, p.name
+        ORDER BY p.created_at DESC
         LIMIT 20
       `, [negocioId]);
       return res.rows;
@@ -49,7 +49,7 @@ export default class ProductRepository {
     const res = await pool.query(`
       ${SELECT}
       WHERE (p.name ILIKE $1 OR p.code ILIKE $1) AND p.negocio_id = $2 AND p.deleted_at IS NULL
-      ORDER BY p.seccion ASC, p.peso DESC, p.name
+      ORDER BY p.created_at DESC
     `, [`%${name}%`, negocioId]);
     return res.rows;
   }
@@ -73,7 +73,7 @@ export default class ProductRepository {
       const dir = sort === "price_asc" ? "ASC" : "DESC";
       orderClause = `p.costo_usd ${dir} NULLS LAST`;
     } else {
-      orderClause = ORDER_MAP[sort] ?? "p.seccion ASC, p.peso DESC";
+      orderClause = ORDER_MAP[sort] ?? "p.created_at DESC";
     }
 
     const res = await pool.query(`
@@ -204,14 +204,6 @@ export default class ProductRepository {
     return res.rows[0];
   }
 
-  async getMaxPeso(negocioId, seccion) {
-    const res = await pool.query(
-      `SELECT COALESCE(MAX(peso), 0) AS max_peso FROM products WHERE negocio_id = $1 AND seccion = $2 AND deleted_at IS NULL`,
-      [negocioId, seccion]
-    );
-    return Number(res.rows[0].max_peso);
-  }
-
   async create(p) {
     const res = await pool.query(
       `INSERT INTO products (
@@ -230,12 +222,10 @@ export default class ProductRepository {
         punto_pedido,
         video_url,
         costo_usd,
-        negocio_id,
-        seccion,
-        peso
+        negocio_id
       )
       VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
       )
       RETURNING *`,
       [
@@ -255,8 +245,6 @@ export default class ProductRepository {
         p.video_url,
         p.costo_usd ?? null,
         p.negocio_id,
-        p.seccion ?? 1,
-        p.peso ?? 10,
       ]
     );
 
@@ -280,10 +268,8 @@ export default class ProductRepository {
         qxb=$12,
         punto_pedido=$13,
         video_url=$14,
-        costo_usd=$15,
-        seccion=$16,
-        peso=$17
-      WHERE id=$18
+        costo_usd=$15
+      WHERE id=$16
       RETURNING *`,
       [
         p.name,
@@ -301,8 +287,6 @@ export default class ProductRepository {
         p.punto_pedido,
         p.video_url,
         p.costo_usd ?? null,
-        p.seccion ?? 1,
-        p.peso ?? 10,
         id
       ]
     );
