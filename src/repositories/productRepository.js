@@ -40,7 +40,7 @@ export default class ProductRepository {
       const res = await pool.query(`
         ${SELECT}
         WHERE p.negocio_id = $1 AND p.deleted_at IS NULL AND p.active = true
-        ORDER BY p.name ASC
+        ORDER BY p.name COLLATE "C" ASC
         LIMIT 11
       `, [negocioId]);
       return res.rows;
@@ -49,7 +49,7 @@ export default class ProductRepository {
     const res = await pool.query(`
       ${SELECT}
       WHERE (p.name ILIKE $1 OR p.code ILIKE $1) AND p.negocio_id = $2 AND p.deleted_at IS NULL
-      ORDER BY p.name ASC
+      ORDER BY p.name COLLATE "C" ASC
     `, [`%${name}%`, negocioId]);
     return res.rows;
   }
@@ -64,8 +64,8 @@ export default class ProductRepository {
     const ORDER_MAP = {
       price_asc:  "price_asc",
       price_desc: "price_desc",
-      name_asc:   "p.name ASC",
-      name_desc:  "p.name DESC",
+      name_asc:   "p.name COLLATE \"C\" ASC",
+      name_desc:  "p.name COLLATE \"C\" DESC",
     };
 
     let orderClause;
@@ -73,7 +73,7 @@ export default class ProductRepository {
       const dir = sort === "price_asc" ? "ASC" : "DESC";
       orderClause = `p.costo_usd ${dir} NULLS LAST`;
     } else {
-      orderClause = ORDER_MAP[sort] ?? "p.name ASC";
+      orderClause = ORDER_MAP[sort] ?? "p.name COLLATE \"C\" ASC";
     }
 
     const res = await pool.query(`
