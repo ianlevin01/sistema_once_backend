@@ -3,6 +3,7 @@ import ProductService from "../services/productService.js";
 import { upload } from "../middlewares/upload.js";
 import { requireAuth } from "./authRoutes.js";
 import jwt from "jsonwebtoken";
+import pool from "../database/db.js";
 
 const router = Router();
 const svc = new ProductService();
@@ -45,6 +46,12 @@ router.get("/search", resolveNegocio, async (req, res) => {
   const isShop = !req.user.id; // shop uses ?negocio_id= param, ERP uses JWT (has user.id)
   const result = await svc.search(name, req.user.negocio_id, isShop);
   return res.status(200).json(result);
+});
+
+// Subir producto (actualiza created_at a NOW para que aparezca primero)
+router.patch("/:id/subir", requireAuth, async (req, res) => {
+  await pool.query("UPDATE products SET created_at = NOW() WHERE id = $1", [req.params.id]);
+  return res.status(200).json({ ok: true });
 });
 
 // ── Price overrides por producto ──────────────────────────────
