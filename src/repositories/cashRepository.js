@@ -3,9 +3,9 @@ import pool from "../database/db.js"
 export default class CashRepository {
   async create(mov) {
     const res = await pool.query(
-      `INSERT INTO cash_movements (type, source, amount, divisa, warehouse_id, negocio_id)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [mov.type, mov.source, mov.amount, mov.divisa || "ARS", mov.warehouse_id || null, mov.negocio_id]
+      `INSERT INTO cash_movements (type, source, amount, divisa, warehouse_id, negocio_id, description)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [mov.type, mov.source, mov.amount, mov.divisa || "ARS", mov.warehouse_id || null, mov.negocio_id, mov.description || null]
     );
     return res.rows[0];
   }

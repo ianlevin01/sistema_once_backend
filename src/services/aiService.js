@@ -3,6 +3,10 @@ import ProductRepository from "../repositories/productRepository.js";
 import S3Service from "./S3Service.js";
 
 const ID_MARKER = /\[\[ID:([0-9a-f-]{36})\]\]/gi;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
+
+// Cache por negocio para no recargar todo el catálogo en cada request
+const _cache = new Map(); // negocioId → { products, time }
 
 export default class AIService {
   repo = new ProductRepository();
@@ -11,8 +15,16 @@ export default class AIService {
   async chat(userMessage, negocioId, baseUrl) {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    const all = await this.repo.search("", negocioId);
-    const products = all.filter((p) => p.active === true);
+    const now = Date.now();
+    const cached = _cache.get(negocioId);
+    let products;
+    if (cached && (now - cached.time) < CACHE_TTL) {
+      products = cached.products;
+    } else {
+      const all = await this.repo.search("", negocioId);
+      products = all.filter((p) => p.active === true);
+      _cache.set(negocioId, { products, time: now });
+    }
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 

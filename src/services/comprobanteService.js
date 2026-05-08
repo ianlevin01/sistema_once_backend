@@ -396,7 +396,21 @@ export default class ComprobanteService {
          WHERE oi.order_id = $1`, [id]
       );
       const oldItems = oldItemsRes.rows;
-      const newItems = data.items || [];
+      const newItemsRaw = data.items || [];
+
+      // Para órdenes en USD: items llegan en USD desde el frontend, convertir a ARS para almacenamiento
+      const divisaOrder = order.divisa || "ARS";
+      let cotizUSD = null;
+      if (divisaOrder === "USD") {
+        const cotizResEarly = await client.query(
+          `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
+          [order.negocio_id]
+        );
+        cotizUSD = Number(cotizResEarly.rows[0]?.cotizacion_dolar || 1000);
+      }
+      const newItems = cotizUSD
+        ? newItemsRaw.map(i => ({ ...i, unit_price: Math.round(Number(i.unit_price) * cotizUSD * 100) / 100 }))
+        : newItemsRaw;
 
       // ── Calcular diff de stock por producto ─────────────────
       const stockDiff = {};
@@ -456,15 +470,23 @@ export default class ComprobanteService {
       }
 
       // ── Recalcular total y ajustar CC ────────────────────────
-      const newTotal   = newItems.reduce((acc, i) => acc + i.unit_price * i.quantity, 0);
-      const oldTotal   = Number(order.total);
-      const totalDelta = newTotal - oldTotal;
+      // newItems ya están en ARS (se convirtió arriba si cotizUSD != null)
+      const newTotalARS = Math.round(newItems.reduce((acc, i) => acc + Number(i.unit_price) * Number(i.quantity), 0) * 100) / 100;
+      const newTotal    = cotizUSD
+        ? Math.round((newTotalARS / cotizUSD) * 100) / 100  // guardar en USD
+        : newTotalARS;
+      const oldTotalStored = Number(order.total);
+      const oldTotalARS    = cotizUSD ? Math.round(oldTotalStored * cotizUSD * 100) / 100 : oldTotalStored;
+      const totalDelta     = newTotalARS - oldTotalARS; // siempre en ARS para lógica CC
 
       const paymentRes = await client.query(
         `SELECT method FROM payments WHERE order_id = $1 LIMIT 1`, [id]
       );
-      const paymentMethod     = data.payment_method || paymentRes.rows[0]?.method;
-      const esCuentaCorriente = paymentMethod === "Cta Cte";
+      const oldPaymentMethod     = paymentRes.rows[0]?.method || null;
+      const newPaymentMethod     = data.payment_method !== undefined ? data.payment_method : oldPaymentMethod;
+      const paymentMethodChanged = data.payment_method !== undefined && data.payment_method !== oldPaymentMethod;
+      const wasCtaCte            = oldPaymentMethod === "Cta Cte";
+      const isCtaCte             = newPaymentMethod === "Cta Cte";
 
       // Detectar cambio de cliente
       const newCustomerId        = data.customer_id !== undefined ? (data.customer_id || null) : order.customer_id;
@@ -473,19 +495,68 @@ export default class ComprobanteService {
       const oldEsConsumidorFinal = !!order.es_consumidor_final;
       const customerChanged      = newCustomerId !== oldCustomerId || newEsConsumidorFinal !== oldEsConsumidorFinal;
 
-      if ((esPresupuesto || esDevolucion) && esCuentaCorriente) {
+      if ((esPresupuesto || esDevolucion) && (wasCtaCte || isCtaCte)) {
         const cotizRes = await client.query(
           `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
           [order.negocio_id]
         );
         const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
 
-        if (customerChanged) {
-          // Revertir CC del cliente anterior (monto completo)
+        if (paymentMethodChanged && wasCtaCte && !isCtaCte) {
+          // Cambio DE Cta Cte A otro método: revertir el monto completo del cliente
+          if (oldCustomerId && !oldEsConsumidorFinal) {
+            const cc = await this.ccRepo.getOrCreate(oldCustomerId, client);
+            const divisaCC      = cc.divisa ?? "ARS";
+            const montoEnCuenta = divisaCC === "USD" ? oldTotalARS / cotizacion : oldTotalARS;
+            if (montoEnCuenta !== 0) {
+              // Revertir: presupuesto debitó → acreditar; devolucion acreditó → debitar
+              const tipoMov  = esPresupuesto ? "pago" : "debito";
+              const saldoAdj = esPresupuesto ? -montoEnCuenta : montoEnCuenta;
+              await client.query(
+                `INSERT INTO cc_movimientos
+                   (cuenta_corriente_id, tipo, concepto, monto, order_id,
+                    divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+                [cc.id, tipoMov, `Reversión método pago — ${id.slice(0,8)}`,
+                 Math.abs(montoEnCuenta), id, divisaCC, "ARS", oldTotalARS,
+                 divisaCC === "USD" ? cotizacion : null]
+              );
+              await client.query(
+                `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+                [saldoAdj, cc.id]
+              );
+            }
+          }
+        } else if (paymentMethodChanged && !wasCtaCte && isCtaCte) {
+          // Cambio A Cta Cte desde otro método: aplicar el monto completo al cliente
+          if (newCustomerId && !newEsConsumidorFinal) {
+            const cc = await this.ccRepo.getOrCreate(newCustomerId, client);
+            const divisaCC      = cc.divisa ?? "ARS";
+            const montoEnCuenta = divisaCC === "USD" ? newTotalARS / cotizacion : newTotalARS;
+            if (montoEnCuenta !== 0) {
+              const tipoMov  = esPresupuesto ? "debito" : "pago";
+              const saldoAdj = esPresupuesto ? montoEnCuenta : -montoEnCuenta;
+              await client.query(
+                `INSERT INTO cc_movimientos
+                   (cuenta_corriente_id, tipo, concepto, monto, order_id,
+                    divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+                [cc.id, tipoMov, `Aplicación método pago — ${id.slice(0,8)}`,
+                 Math.abs(montoEnCuenta), id, divisaCC, "ARS", newTotalARS,
+                 divisaCC === "USD" ? cotizacion : null]
+              );
+              await client.query(
+                `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+                [saldoAdj, cc.id]
+              );
+            }
+          }
+        } else if (isCtaCte && customerChanged) {
+          // Mismo método Cta Cte, cambio de cliente
           if (oldCustomerId && !oldEsConsumidorFinal) {
             const ccOld = await this.ccRepo.getOrCreate(oldCustomerId, client);
             const divisaCC = ccOld.divisa ?? "ARS";
-            const montoEnCuenta = divisaCC === "USD" ? oldTotal / cotizacion : oldTotal;
+            const montoEnCuenta = divisaCC === "USD" ? oldTotalARS / cotizacion : oldTotalARS;
             if (montoEnCuenta !== 0) {
               const tipoMov  = esPresupuesto ? "pago" : "debito";
               const saldoAdj = esPresupuesto ? -montoEnCuenta : montoEnCuenta;
@@ -495,7 +566,7 @@ export default class ComprobanteService {
                     divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
                 [ccOld.id, tipoMov, `Reversión cliente — ${id.slice(0,8)}`,
-                 Math.abs(montoEnCuenta), id, divisaCC, "ARS", oldTotal,
+                 Math.abs(montoEnCuenta), id, divisaCC, "ARS", oldTotalARS,
                  divisaCC === "USD" ? cotizacion : null]
               );
               await client.query(
@@ -504,11 +575,10 @@ export default class ComprobanteService {
               );
             }
           }
-          // Aplicar CC al nuevo cliente (monto nuevo completo)
           if (newCustomerId && !newEsConsumidorFinal) {
             const ccNew = await this.ccRepo.getOrCreate(newCustomerId, client);
             const divisaCC = ccNew.divisa ?? "ARS";
-            const montoEnCuenta = divisaCC === "USD" ? newTotal / cotizacion : newTotal;
+            const montoEnCuenta = divisaCC === "USD" ? newTotalARS / cotizacion : newTotalARS;
             if (montoEnCuenta !== 0) {
               const tipoMov  = esPresupuesto ? "debito" : "pago";
               const saldoAdj = esPresupuesto ? montoEnCuenta : -montoEnCuenta;
@@ -518,7 +588,7 @@ export default class ComprobanteService {
                     divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
                 [ccNew.id, tipoMov, `Asignación cliente — ${id.slice(0,8)}`,
-                 Math.abs(montoEnCuenta), id, divisaCC, "ARS", newTotal,
+                 Math.abs(montoEnCuenta), id, divisaCC, "ARS", newTotalARS,
                  divisaCC === "USD" ? cotizacion : null]
               );
               await client.query(
@@ -527,8 +597,8 @@ export default class ComprobanteService {
               );
             }
           }
-        } else if (totalDelta !== 0 && oldCustomerId && !oldEsConsumidorFinal) {
-          // Mismo cliente, solo ajuste por delta de monto
+        } else if (isCtaCte && totalDelta !== 0 && oldCustomerId && !oldEsConsumidorFinal) {
+          // Mismo método Cta Cte, mismo cliente, solo ajuste de monto
           const cc = await this.ccRepo.getOrCreate(oldCustomerId, client);
           const divisaCC      = cc.divisa ?? "ARS";
           const deltaEnCuenta = divisaCC === "USD" ? totalDelta / cotizacion : totalDelta;
@@ -615,11 +685,10 @@ export default class ComprobanteService {
         [id, ...Object.values(updates)]
       );
 
-      if (data.payment_method && data.payment_method !== paymentMethod) {
-        const newIsCta = data.payment_method === "Cta Cte";
+      if (data.payment_method !== undefined && data.payment_method !== oldPaymentMethod) {
         await client.query(
           `UPDATE payments SET method = $1, amount = $2 WHERE order_id = $3`,
-          [data.payment_method, newIsCta ? 0 : newTotal, id]
+          [data.payment_method, isCtaCte ? 0 : newTotal, id]
         );
       }
 
@@ -940,11 +1009,13 @@ export default class ComprobanteService {
         SELECT o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
                o.customer_id, o.price_type, c.name AS customer_name,
                pm.method AS payment_method,
-               wo.numero AS web_order_numero
+               wo.numero AS web_order_numero,
+               w.name AS warehouse_name
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN payments pm ON pm.order_id = o.id
         LEFT JOIN web_orders wo ON wo.order_id = o.id
+        LEFT JOIN warehouses w ON w.id = o.warehouse_id
         WHERE o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
           ${notasNegocioFilter}
           ${notasWhFilter}
@@ -968,8 +1039,10 @@ export default class ComprobanteService {
         ? ` AND o.warehouse_id = $${remitosParams.push(warehouseId)}`
         : "";
       const remitosRes = await client.query(`
-        SELECT o.id, o.created_at, o.total, o.vendedor, o.origen, o.destino
+        SELECT o.id, o.created_at, o.total, o.origen, o.destino,
+               u.name AS vendedor
         FROM orders o
+        LEFT JOIN users u ON u.id = o.recipient_user_id
         WHERE o.tipo = 'Remito' AND o.created_at BETWEEN $1 AND $2
           ${remitosNegocioFilter}
           ${remitosWhFilter}

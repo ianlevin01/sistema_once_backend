@@ -246,9 +246,10 @@ export default class CuentaCorrienteRepository {
       const cotizacion = cotizacion_manual != null ? cotizacion_manual : await getCotizacion(client, negocio_id);
 
       const custRes = await client.query(
-        `SELECT name FROM customers WHERE id = $1`, [customerId]
+        `SELECT name, negocio_id FROM customers WHERE id = $1`, [customerId]
       );
       const customerName = custRes.rows[0]?.name || "";
+      const negocio_id_resolved = negocio_id ?? custRes.rows[0]?.negocio_id;
 
       const cuenta  = await this.getOrCreate(customerId, client);
       if (!cuenta) throw new Error("Este cliente no tiene cuenta corriente");
@@ -286,7 +287,7 @@ export default class CuentaCorrienteRepository {
       await client.query(
         `INSERT INTO cash_movements (type, source, amount, reference_id, negocio_id, warehouse_id)
          VALUES ('ingreso', $1, $2, $3, $4, $5)`,
-        [metodo_pago, montoARS, cuenta.id, negocio_id, warehouse_id || null]
+        [metodo_pago, montoARS, cuenta.id, negocio_id_resolved, warehouse_id || null]
       );
 
       await client.query("COMMIT");
