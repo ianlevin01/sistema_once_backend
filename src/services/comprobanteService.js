@@ -107,8 +107,9 @@ export default class ComprobanteService {
         INSERT INTO orders (
           customer_id, supplier_id, user_id, warehouse_id,
           total, profit, status, tipo, vendedor, price_type, texto_libre,
-          es_consumidor_final, consumidor_final_nombre, divisa, destino, negocio_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+          es_consumidor_final, consumidor_final_nombre, divisa, destino, negocio_id,
+          created_by_user_id, created_by_name
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
         RETURNING *
       `, [
         data.customer_id  || null,
@@ -125,6 +126,8 @@ export default class ComprobanteService {
         divisa,
         (esReposicion || esDevolProv) ? (stockWarehouseId || null) : null,
         data.negocio_id  || null,
+        data.created_by_user_id || null,
+        data.created_by_name    || null,
       ]);
       const orderRow = order.rows[0];
 
@@ -377,6 +380,7 @@ export default class ComprobanteService {
       );
       const order = orderRes.rows[0];
       if (!order) throw new Error("Comprobante no encontrado");
+      if (order.deleted_at) throw new Error("No se puede editar un comprobante eliminado");
 
       const tipo            = order.tipo;
       const warehouseId     = order.warehouse_id;
@@ -598,28 +602,33 @@ export default class ComprobanteService {
             }
           }
         } else if (isCtaCte && totalDelta !== 0 && oldCustomerId && !oldEsConsumidorFinal) {
-          // Mismo método Cta Cte, mismo cliente, solo ajuste de monto
+          // Mismo método Cta Cte, mismo cliente, solo ajuste de monto.
+          // En lugar de acumular movimientos de ajuste (que complican el delete),
+          // reemplazamos todos los movimientos existentes del comprobante con uno
+          // solo que refleja el total actual. El saldo sigue ajustándose por delta.
           const cc = await this.ccRepo.getOrCreate(oldCustomerId, client);
-          const divisaCC      = cc.divisa ?? "ARS";
-          const deltaEnCuenta = divisaCC === "USD" ? totalDelta / cotizacion : totalDelta;
+          const divisaCC         = cc.divisa ?? "ARS";
+          const deltaEnCuenta    = divisaCC === "USD" ? totalDelta / cotizacion : totalDelta;
+          const newMontoEnCuenta = divisaCC === "USD" ? newTotalARS / cotizacion : newTotalARS;
 
           if (deltaEnCuenta !== 0) {
-            let tipoMov, saldoDelta;
-            if (esPresupuesto) {
-              tipoMov    = deltaEnCuenta > 0 ? "debito" : "pago";
-              saldoDelta = deltaEnCuenta > 0 ? Math.abs(deltaEnCuenta) : -Math.abs(deltaEnCuenta);
-            } else {
-              tipoMov    = deltaEnCuenta > 0 ? "pago" : "debito";
-              saldoDelta = deltaEnCuenta > 0 ? -Math.abs(deltaEnCuenta) : Math.abs(deltaEnCuenta);
-            }
+            const tipoMov    = esPresupuesto ? "debito" : "pago";
+            const saldoDelta = esPresupuesto ? deltaEnCuenta : -deltaEnCuenta;
+
+            await client.query(
+              `DELETE FROM cc_movimientos
+               WHERE cuenta_corriente_id = $1
+                 AND (order_id = $2 OR concepto LIKE '% — ' || LEFT($2::text, 8))`,
+              [cc.id, id]
+            );
             await client.query(
               `INSERT INTO cc_movimientos
                  (cuenta_corriente_id, tipo, concepto, monto, order_id,
                   divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-              [cc.id, tipoMov, `Ajuste edición — ${id.slice(0,8)}`,
-               Math.abs(deltaEnCuenta), id,
-               divisaCC, "ARS", Math.abs(totalDelta),
+              [cc.id, tipoMov, `${tipo} — ${id.slice(0, 8)}`,
+               Math.abs(newMontoEnCuenta), id,
+               divisaCC, "ARS", Math.abs(newTotalARS),
                divisaCC === "USD" ? cotizacion : null]
             );
             await client.query(
@@ -678,6 +687,8 @@ export default class ComprobanteService {
       if (data.es_consumidor_final   !== undefined) updates.es_consumidor_final   = !!data.es_consumidor_final;
       if (data.consumidor_final_nombre !== undefined) updates.consumidor_final_nombre = data.consumidor_final_nombre || null;
       if (data.divisa                !== undefined) updates.divisa                = data.divisa;
+      if (data.edited_by_user_id     !== undefined) updates.edited_by_user_id     = data.edited_by_user_id || null;
+      if (data.edited_by_name        !== undefined) updates.edited_by_name        = data.edited_by_name    || null;
 
       const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);
       await client.query(
@@ -703,9 +714,12 @@ export default class ComprobanteService {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // ELIMINAR
+  // ELIMINAR (soft delete)
+  // El comprobante NO se borra: se marca como eliminado y se
+  // revierte stock + CC al estado previo a su creación.
+  // Items y payments se conservan para visualización histórica.
   // ─────────────────────────────────────────────────────────────
-  async delete(id) {
+  async delete(id, audit = {}) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -715,6 +729,7 @@ export default class ComprobanteService {
       );
       const order = orderRes.rows[0];
       if (!order) throw new Error("Comprobante no encontrado");
+      if (order.deleted_at) throw new Error("El comprobante ya está eliminado");
 
       const tipo            = order.tipo;
       const warehouseId     = order.warehouse_id;
@@ -737,13 +752,8 @@ export default class ComprobanteService {
       );
       const esCuentaCorriente = paymentRes.rows[0]?.method === "Cta Cte";
 
-      const cotizRes = await client.query(
-        `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
-        [order.negocio_id]
-      );
-      const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
-
       // ── Revertir stock ──────────────────────────────────────
+      // Usa los items vigentes (post-ediciones), igual que antes.
       for (const item of items) {
         if (!item.product_id) continue;
 
@@ -755,7 +765,6 @@ export default class ComprobanteService {
             [item.quantity, item.product_id]
           );
         } else if (esReposicion && stockWarehouseId) {
-          // Reposición sumó stock en destino → restar del destino
           await client.query(
             `UPDATE stock SET quantity = quantity - $1
              WHERE product_id = $2 AND warehouse_id = $3`,
@@ -772,7 +781,6 @@ export default class ComprobanteService {
             await this._deductStock(client, item.product_id, item.quantity, null);
           }
         } else if (esDevolProv) {
-          // Devol a proveedor restó stock del origen → devolver al origen
           if (stockWarehouseId) {
             await client.query(
               `INSERT INTO stock (product_id, warehouse_id, quantity) VALUES ($1,$2,$3)
@@ -786,75 +794,73 @@ export default class ComprobanteService {
         }
       }
 
-      // order.total está guardado en la divisa del comprobante (ARS o USD).
-      // Para operar con CC necesitamos el monto en ARS.
-      const totalGuardado = Number(order.total);
-      const divisaOrder   = order.divisa || "ARS";
-      const totalARS      = divisaOrder === "USD" ? totalGuardado * cotizacion : totalGuardado;
-
       // ── Revertir CC cliente ─────────────────────────────────
-      if (esCuentaCorriente && order.customer_id && !order.es_consumidor_final) {
-        if (esPresupuesto || esDevolucion) {
-          const cc = await this.ccRepo.getOrCreate(order.customer_id, client);
-          if (cc) {
-            // Eliminar el movimiento original y revertir su efecto en el saldo.
-            // Presupuesto creó un 'debito'; devolución creó un 'pago'.
-            const tipoOriginal = esPresupuesto ? "debito" : "pago";
-            const movsRes = await client.query(
-              `SELECT id, monto FROM cc_movimientos
-               WHERE order_id = $1 AND tipo = $2 AND cuenta_corriente_id = $3`,
-              [id, tipoOriginal, cc.id]
-            );
-            for (const mov of movsRes.rows) {
-              // Revertir: debito restaba saldo → al eliminar sumar; pago sumaba → restar
-              const saldoDelta = esPresupuesto ? -Number(mov.monto) : Number(mov.monto);
-              await client.query(
-                `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
-                [saldoDelta, cc.id]
-              );
-              await client.query(`DELETE FROM cc_movimientos WHERE id = $1`, [mov.id]);
-            }
-          }
+      // Importante: revertir TODOS los movimientos creados por este order
+      // (el original más cualquier ajuste posterior por edición). De lo
+      // contrario, después de editar y eliminar quedan saldos colgados.
+      // Una edición puede haber cambiado el cliente, así que los movs pueden
+      // estar repartidos en más de una cuenta corriente.
+      // Convención de signos en cc_movimientos:
+      //   tipo='debito' sumó saldo al crearse → al revertir restamos
+      //   tipo='pago'   restó saldo al crearse → al revertir sumamos
+      const movsCli = await client.query(
+        `SELECT id, cuenta_corriente_id, tipo, monto
+         FROM cc_movimientos
+         WHERE order_id = $1
+            OR concepto LIKE '% — ' || LEFT($1::text, 8)`,
+        [id]
+      );
+      for (const mov of movsCli.rows) {
+        const saldoDelta = mov.tipo === "debito"
+          ? -Number(mov.monto)
+          :  Number(mov.monto);
+        if (saldoDelta !== 0) {
+          await client.query(
+            `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+            [saldoDelta, mov.cuenta_corriente_id]
+          );
         }
+        await client.query(`DELETE FROM cc_movimientos WHERE id = $1`, [mov.id]);
       }
 
       // ── Revertir CC proveedor ───────────────────────────────
-      if (order.supplier_id && (esReposicion || esDevolProv)) {
-        const ccProv        = await this.proveedorRepo.getOrCreateCC(order.supplier_id, client);
-        const divisaCC      = ccProv.divisa ?? "ARS";
-        const montoEnCuenta = divisaCC === "USD" ? totalARS / cotizacion : totalARS;
-
-        let saldoDelta, tipoMov;
-        if (esReposicion) {
-          // Reposición acreditó saldo al proveedor → al eliminar reducir saldo
-          saldoDelta = -montoEnCuenta;
-          tipoMov    = "debito";
-        } else {
-          // Devol a proveedor debitó saldo → al eliminar devolver saldo
-          saldoDelta = montoEnCuenta;
-          tipoMov    = "pago";
+      // En cuentas_corrientes_prov el signo es opuesto al de cliente:
+      //   tipo='pago'   sumó saldo (reposición acreditó al proveedor)
+      //   tipo='debito' restó saldo (devolución debitó saldo al proveedor)
+      const movsProv = await client.query(
+        `SELECT id, cuenta_corriente_id, tipo, monto
+         FROM cc_movimientos_prov
+         WHERE order_id = $1
+            OR concepto LIKE '% — ' || LEFT($1::text, 8)`,
+        [id]
+      );
+      for (const mov of movsProv.rows) {
+        const saldoDelta = mov.tipo === "pago"
+          ? -Number(mov.monto)
+          :  Number(mov.monto);
+        if (saldoDelta !== 0) {
+          await client.query(
+            `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+            [saldoDelta, mov.cuenta_corriente_id]
+          );
         }
-
-        await client.query(
-          `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
-          [saldoDelta, ccProv.id]
-        );
-        await client.query(
-          `INSERT INTO cc_movimientos_prov
-             (cuenta_corriente_id, tipo, concepto, monto, order_id,
-              divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [ccProv.id, tipoMov, `Anulación — ${id.slice(0,8)}`,
-           montoEnCuenta, id, divisaCC, "ARS", totalARS,
-           divisaCC === "USD" ? cotizacion : null]
-        );
+        await client.query(`DELETE FROM cc_movimientos_prov WHERE id = $1`, [mov.id]);
       }
 
-      // ── Borrar ──────────────────────────────────────────────
-      await client.query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
-      await client.query(`DELETE FROM payments WHERE order_id = $1`, [id]);
-      await client.query(`UPDATE web_orders SET order_id = NULL WHERE order_id = $1`, [id]);
-      await client.query(`DELETE FROM orders WHERE id = $1`, [id]);
+      // ── Soft delete: el comprobante sigue existiendo ────────
+      // Items y payments se conservan para que el detalle siga siendo visible.
+      await client.query(
+        `UPDATE web_orders SET order_id = NULL WHERE order_id = $1`,
+        [id]
+      );
+      await client.query(
+        `UPDATE orders
+         SET deleted_at         = NOW(),
+             deleted_by_user_id = $2,
+             deleted_by_name    = $3
+         WHERE id = $1`,
+        [id, audit.deleted_by_user_id || null, audit.deleted_by_name || null]
+      );
 
       await client.query("COMMIT");
     } catch (err) {
@@ -952,6 +958,8 @@ export default class ComprobanteService {
           o.es_consumidor_final, o.consumidor_final_nombre,
           COALESCE(NULLIF(o.divisa, ''), 'ARS') AS divisa,
           o.total,
+          o.created_by_name, o.edited_by_name,
+          o.deleted_at, o.deleted_by_name,
           CASE
             WHEN o.es_consumidor_final THEN COALESCE(o.consumidor_final_nombre, 'Consumidor Final')
             ELSE COALESCE(c.name, pr.name)
@@ -980,11 +988,14 @@ export default class ComprobanteService {
           pr.name AS supplier_name,
           w.name  AS warehouse_name,
           COALESCE(NULLIF(o.divisa, ''), 'ARS') AS divisa,
-          o.total
+          o.total,
+          o.created_by_name, o.edited_by_name,
+          o.deleted_at, o.deleted_by_name
         FROM orders o
         LEFT JOIN proveedores pr ON pr.id = o.supplier_id
         LEFT JOIN warehouses  w  ON w.id  = o.warehouse_id
         WHERE o.tipo IN ('Reposicion', 'Devol a proveedor')
+          AND o.deleted_at IS NULL
           AND o.created_at BETWEEN $1 AND $2
           ${reposNegocioFilter}
           ${reposWhFilter}
@@ -1010,13 +1021,16 @@ export default class ComprobanteService {
                o.customer_id, o.price_type, c.name AS customer_name,
                pm.method AS payment_method,
                wo.numero AS web_order_numero,
-               w.name AS warehouse_name
+               w.name AS warehouse_name,
+               o.created_by_name, o.edited_by_name,
+               o.deleted_at, o.deleted_by_name
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN payments pm ON pm.order_id = o.id
         LEFT JOIN web_orders wo ON wo.order_id = o.id
         LEFT JOIN warehouses w ON w.id = o.warehouse_id
         WHERE o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
+          AND o.deleted_at IS NULL
           ${notasNegocioFilter}
           ${notasWhFilter}
         ORDER BY o.created_at DESC
@@ -1043,7 +1057,9 @@ export default class ComprobanteService {
                u.name AS vendedor
         FROM orders o
         LEFT JOIN users u ON u.id = o.recipient_user_id
-        WHERE o.tipo = 'Remito' AND o.created_at BETWEEN $1 AND $2
+        WHERE o.tipo = 'Remito'
+          AND o.deleted_at IS NULL
+          AND o.created_at BETWEEN $1 AND $2
           ${remitosNegocioFilter}
           ${remitosWhFilter}
         ORDER BY o.created_at DESC
@@ -1088,7 +1104,9 @@ export default class ComprobanteService {
       JOIN orders o      ON o.id  = oi.order_id
       JOIN products p    ON p.id  = oi.product_id
       LEFT JOIN proveedores pr ON pr.id = o.supplier_id
-      WHERE o.tipo = 'Reposicion' AND o.negocio_id = $1
+      WHERE o.tipo = 'Reposicion'
+        AND o.deleted_at IS NULL
+        AND o.negocio_id = $1
         ${dateFilter}
       ORDER BY o.created_at DESC
       LIMIT 500

@@ -2,6 +2,7 @@ import ProductRepository from "../repositories/productRepository.js";
 import S3Service from "./S3Service.js";
 import pool from "../database/db.js";
 import { generateEmbedding, productToText } from "./embeddingService.js";
+import XLSX from "xlsx";
 
 // ── Caché de config de precios por negocio (60s) ─────────────────────────────
 const _configCache = new Map(); // negocio_id → { config, ts }
@@ -252,4 +253,479 @@ export default class ProductService {
   getOverride(id)         { return this.repo.getOverride(id); }
   setOverride(id, data)   { return this.repo.upsertOverride(id, data); }
   removeOverride(id)      { return this.repo.deleteOverride(id); }
+
+  // ─────────────────────────────────────────────────────────────
+  // EXPORTAR A EXCEL
+  // ─────────────────────────────────────────────────────────────
+  async exportToExcel(negocioId) {
+    const [whRes, config] = await Promise.all([
+      pool.query(`SELECT id, name FROM warehouses WHERE negocio_id = $1 ORDER BY name`, [negocioId]),
+      getPriceConfig(negocioId),
+    ]);
+    const warehouses     = whRes.rows;
+    const warehouseNames = warehouses.map((w) => w.name);
+
+    const { rows: products } = await pool.query(`
+      SELECT
+        p.code, p.name, p.qxb, p.costo_usd, p.punto_pedido, p.active,
+        p.barcode, p.box_code,
+        c.name AS category_name,
+        ppo.pct_1 AS ovr_pct_1, ppo.pct_2 AS ovr_pct_2, ppo.pct_3 AS ovr_pct_3,
+        ppo.pct_4 AS ovr_pct_4, ppo.pct_5 AS ovr_pct_5,
+        COALESCE(
+          (SELECT json_object_agg(w.name, s.quantity)
+           FROM stock s JOIN warehouses w ON w.id = s.warehouse_id
+           WHERE s.product_id = p.id),
+          '{}'::json
+        ) AS stock_by_name
+      FROM products p
+      LEFT JOIN categories c    ON c.id   = p.category_id
+      LEFT JOIN product_price_overrides ppo ON ppo.product_id = p.id
+      WHERE p.negocio_id = $1 AND p.deleted_at IS NULL
+      ORDER BY p.name ASC
+    `, [negocioId]);
+
+    const header = [
+      'CODIGO', 'DETALLE', 'QxB', 'Costo',
+      'Precio #1', 'Precio #2', 'Precio #3', 'Precio #4', 'Precio #5',
+      ...warehouseNames,
+      'Rubro', 'Pto Pedido', 'Barcode', 'Boxcode',
+    ];
+
+    const rows = products.map((p) => {
+      const overrides  = extractOverrides(p);
+      const prices     = buildComputedPrices(Number(p.costo_usd), config, overrides);
+      const stockByName = p.stock_by_name || {};
+      return [
+        p.code,
+        p.name,
+        p.qxb     != null ? Number(p.qxb)      : '',
+        p.costo_usd != null ? Number(p.costo_usd) : '',
+        ...prices.map((pr) => Math.round(pr.price * 100) / 100),
+        ...warehouseNames.map((wn) => stockByName[wn] ?? 0),
+        p.category_name  ?? '',
+        p.punto_pedido   != null ? Number(p.punto_pedido) : 0,
+        p.barcode        ?? '',
+        p.box_code       ?? '',
+      ];
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Productos');
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // IMPORTAR DESDE EXCEL
+  // ─────────────────────────────────────────────────────────────
+  async importFromExcel(buffer, { includeStock = true, apply = false, selectedCodes = [] }, negocioId) {
+    // ── 1. Parsear el Excel ──────────────────────────────────────
+    const wb      = XLSX.read(buffer, { type: 'buffer' });
+    const ws      = wb.Sheets[wb.SheetNames[0]];
+    const allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+    const headerIdx = allRows.findIndex((r) =>
+      r.includes('CODIGO') && r.includes('DETALLE')
+    );
+    if (headerIdx === -1) throw new Error('No se encontró la fila de encabezado (CODIGO / DETALLE)');
+
+    const headers    = allRows[headerIdx];
+    const dataRows   = allRows.slice(headerIdx + 1);
+    const colIdx = (name) => headers.indexOf(name);
+
+    const idxCodigo     = colIdx('CODIGO');
+    const idxDetalle    = colIdx('DETALLE');
+    const idxQxB        = colIdx('QxB');
+    const idxCosto      = colIdx('Costo');
+    const idxPrecio     = [1,2,3,4,5].map((n) => colIdx(`Precio #${n}`));
+    const idxRubro      = colIdx('Rubro');
+    const idxPtoPedido  = colIdx('Pto Pedido');
+    const idxBarcode    = colIdx('Barcode');
+    const idxBoxcode    = colIdx('Boxcode');
+
+    // Detectar columnas de stock (warehouses que aparezcan en el header)
+    const stockColMap = {}; // warehouseName → colIdx
+    if (includeStock) {
+      const knownSpecial = new Set([
+        'CODIGO','DETALLE','QxB','Costo',
+        'Precio #1','Precio #2','Precio #3','Precio #4','Precio #5',
+        'Rubro','Pto Pedido','Barcode','Boxcode',
+        'Tipo Dolar','Pasivo = 1','Incluir en','Stock FULL',
+      ]);
+      headers.forEach((h, i) => {
+        if (h && !knownSpecial.has(h)) stockColMap[h] = i;
+      });
+    }
+
+    const parseNum = (v) => {
+      if (v === null || v === undefined || v === '') return null;
+      const n = parseFloat(String(v).replace(',', '.'));
+      return isNaN(n) ? null : n;
+    };
+
+    // ── 2. Cargar estado actual de la DB ─────────────────────────
+    const [config, categoriesRes, warehousesRes, productsRes] = await Promise.all([
+      getPriceConfig(negocioId),
+      pool.query(`SELECT id, name FROM categories    WHERE negocio_id = $1`, [negocioId]),
+      pool.query(`SELECT id, name FROM warehouses    WHERE negocio_id = $1`, [negocioId]),
+      pool.query(`
+        SELECT
+          p.id, p.code, p.name, p.qxb, p.costo_usd, p.punto_pedido, p.active,
+          p.barcode, p.box_code, c.name AS category_name,
+          ppo.pct_1 AS ovr_pct_1, ppo.pct_2 AS ovr_pct_2, ppo.pct_3 AS ovr_pct_3,
+          ppo.pct_4 AS ovr_pct_4, ppo.pct_5 AS ovr_pct_5,
+          COALESCE(
+            (SELECT json_object_agg(w.name, s.quantity)
+             FROM stock s JOIN warehouses w ON w.id = s.warehouse_id
+             WHERE s.product_id = p.id),
+            '{}'::json
+          ) AS stock_by_name
+        FROM products p
+        LEFT JOIN categories c ON c.id = p.category_id
+        LEFT JOIN product_price_overrides ppo ON ppo.product_id = p.id
+        WHERE p.negocio_id = $1 AND p.deleted_at IS NULL
+      `, [negocioId]),
+    ]);
+
+    const catMap  = new Map(categoriesRes.rows.map((c) => [c.name.trim().toLowerCase(), c.id]));
+    const whMap   = new Map(warehousesRes.rows.map((w) => [w.name, w.id]));
+    const prodMap = new Map(productsRes.rows.map((p) => [String(p.code).trim(), p]));
+
+    const cotizacion   = Number(config.cotizacion_dolar || 1);
+    const globalPct    = [1,2,3,4,5].map((n) => Number(config[`pct_${n}`] || 0));
+
+    const PCT_TOL = 0.01; // ±0.01% se considera igual al global
+
+    // ── 3. Calcular diff ─────────────────────────────────────────
+    const diff = [];
+    let unchanged = 0;
+
+    for (const row of dataRows) {
+      const code = String(row[idxCodigo] ?? '').trim();
+      if (!code) continue;
+
+      const existing = prodMap.get(code);
+      const isNew    = !existing;
+
+      const xlsxName       = String(row[idxDetalle] ?? '').trim();
+      const xlsxQxB        = parseNum(row[idxQxB]);
+      const xlsxCosto      = parseNum(row[idxCosto]);
+      const xlsxPtoPedido  = parseNum(row[idxPtoPedido]);
+      const xlsxActive     = xlsxPtoPedido != null && xlsxPtoPedido > 0;
+      const xlsxRubro      = String(row[idxRubro] ?? '').trim();
+      const xlsxBarcode    = String(row[idxBarcode] ?? '').trim();
+      const xlsxBoxcode    = String(row[idxBoxcode] ?? '').trim();
+      const xlsxPrices     = idxPrecio.map((ci) => parseNum(row[ci]));
+
+      // Costo efectivo para calcular pct (usar el nuevo si cambió, si no el actual)
+      const effectiveCosto = xlsxCosto ?? (existing ? Number(existing.costo_usd) : null);
+
+      if (isNew) {
+        // Calcular pct overrides para el nuevo producto
+        const priceChanges = [];
+        if (effectiveCosto && cotizacion) {
+          xlsxPrices.forEach((xlsxP, i) => {
+            if (xlsxP == null) return;
+            const pctNuevo = (xlsxP / (effectiveCosto * cotizacion) - 1) * 100;
+            const pctGlobal = globalPct[i];
+            if (Math.abs(pctNuevo - pctGlobal) > PCT_TOL) {
+              priceChanges.push({ field: `precio_${i+1}`, from: null, to: xlsxP, pct: Math.round(pctNuevo * 100) / 100 });
+            }
+          });
+        }
+        const stockChanges = [];
+        if (includeStock) {
+          for (const [wName, ci] of Object.entries(stockColMap)) {
+            const qty = parseNum(row[ci]) ?? 0;
+            if (qty !== 0) stockChanges.push({ field: `stock_${wName}`, from: 0, to: qty });
+          }
+        }
+        diff.push({
+          status: 'new', code, name: xlsxName, costo: xlsxCosto,
+          changes: [
+            ...(xlsxName ? [{ field: 'name', from: null, to: xlsxName }] : []),
+            ...(xlsxCosto != null ? [{ field: 'costo_usd', from: null, to: xlsxCosto }] : []),
+            ...priceChanges,
+            ...stockChanges,
+          ],
+        });
+        continue;
+      }
+
+      // ── Producto existente: calcular cambios ─────────────────
+      const changes = [];
+
+      // Campos simples
+      const strComp = (a, b) => (a || '') === (b || '');
+      if (xlsxName && xlsxName !== (existing.name || ''))
+        changes.push({ field: 'name', from: existing.name, to: xlsxName });
+      if (xlsxCosto != null && Math.abs(xlsxCosto - Number(existing.costo_usd || 0)) > 0.0001)
+        changes.push({ field: 'costo_usd', from: Number(existing.costo_usd), to: xlsxCosto });
+      if (xlsxQxB != null && xlsxQxB !== (existing.qxb != null ? Number(existing.qxb) : null))
+        changes.push({ field: 'qxb', from: existing.qxb != null ? Number(existing.qxb) : null, to: xlsxQxB });
+      if (xlsxPtoPedido != null && xlsxPtoPedido !== (existing.punto_pedido != null ? Number(existing.punto_pedido) : null))
+        changes.push({ field: 'punto_pedido', from: existing.punto_pedido != null ? Number(existing.punto_pedido) : null, to: xlsxPtoPedido });
+      if (idxBarcode >= 0 && !strComp(xlsxBarcode, existing.barcode))
+        changes.push({ field: 'barcode', from: existing.barcode, to: xlsxBarcode });
+      if (idxBoxcode >= 0 && !strComp(xlsxBoxcode, existing.box_code))
+        changes.push({ field: 'box_code', from: existing.box_code, to: xlsxBoxcode });
+      if (xlsxRubro && xlsxRubro.toLowerCase() !== (existing.category_name || '').toLowerCase())
+        changes.push({ field: 'category', from: existing.category_name, to: xlsxRubro });
+
+      // Precios → pct overrides
+      const ovrs = extractOverrides(existing);
+      xlsxPrices.forEach((xlsxP, i) => {
+        if (xlsxP == null) return;
+        const n = i + 1;
+        // Precio actual que el sistema calcula
+        const currentPct = ovrs?.[`pct_${n}`] != null ? Number(ovrs[`pct_${n}`]) : globalPct[i];
+        const currentPrice = effectiveCosto
+          ? Math.round((Number(existing.costo_usd) * cotizacion * (1 + currentPct / 100)) * 100) / 100
+          : null;
+        if (currentPrice != null && Math.abs(xlsxP - currentPrice) < 0.01) return; // sin cambio
+        // Calcular nuevo pct
+        if (!effectiveCosto || !cotizacion) return;
+        const pctNuevo = (xlsxP / (effectiveCosto * cotizacion) - 1) * 100;
+        const fromPrice = currentPrice;
+        changes.push({
+          field: `precio_${n}`,
+          from: fromPrice,
+          to: xlsxP,
+          pct_from: Math.round(currentPct * 100) / 100,
+          pct_to:   Math.round(pctNuevo * 100) / 100,
+          matches_global: Math.abs(pctNuevo - globalPct[i]) <= PCT_TOL,
+        });
+      });
+
+      // Stock
+      if (includeStock) {
+        const stockByName = existing.stock_by_name || {};
+        for (const [wName, ci] of Object.entries(stockColMap)) {
+          const xlsxQty = parseNum(row[ci]) ?? 0;
+          const curQty  = Number(stockByName[wName] ?? 0);
+          if (xlsxQty !== curQty) {
+            changes.push({ field: `stock_${wName}`, from: curQty, to: xlsxQty });
+          }
+        }
+      }
+
+      if (changes.length === 0) { unchanged++; continue; }
+
+      diff.push({ status: 'modified', code, id: existing.id, name: existing.name, changes });
+    }
+
+    const summary = {
+      total:       dataRows.filter((r) => r[idxCodigo]).length,
+      changed:     diff.filter((d) => d.status === 'modified').length,
+      newProducts: diff.filter((d) => d.status === 'new').length,
+      unchanged,
+    };
+
+    if (!apply) return { summary, diff };
+
+    // ── 4. Aplicar cambios ───────────────────────────────────────
+    const selectedSet = new Set(selectedCodes.map(String));
+    const toApply     = diff.filter((d) => selectedSet.has(d.code));
+
+    const client = await pool.connect();
+    let applied = 0;
+    const errors = [];
+    try {
+      await client.query('BEGIN');
+
+      for (const item of toApply) {
+        try {
+          const row      = dataRows.find((r) => String(r[idxCodigo]).trim() === item.code);
+          if (!row) continue;
+
+          const xlsxName      = String(row[idxDetalle] ?? '').trim();
+          const xlsxCosto     = parseNum(row[idxCosto]);
+          const xlsxQxB       = parseNum(row[idxQxB]);
+          const xlsxPtoPedido = parseNum(row[idxPtoPedido]);
+          const xlsxRubro     = String(row[idxRubro] ?? '').trim();
+          const xlsxBarcode   = String(row[idxBarcode] ?? '').trim();
+          const xlsxBoxcode   = String(row[idxBoxcode] ?? '').trim();
+          const xlsxActive    = xlsxPtoPedido != null ? xlsxPtoPedido > 0 : null;
+          const xlsxPrices    = idxPrecio.map((ci) => parseNum(row[ci]));
+          const catId         = xlsxRubro ? (catMap.get(xlsxRubro.toLowerCase()) ?? null) : undefined;
+          const effectiveCosto = xlsxCosto ?? (item.id ? Number(prodMap.get(item.code)?.costo_usd) : null);
+
+          if (item.status === 'new') {
+            // Insertar producto nuevo
+            let newCatId = null;
+            if (xlsxRubro) {
+              newCatId = catMap.get(xlsxRubro.toLowerCase()) ?? null;
+              if (!newCatId) {
+                const catInsert = await client.query(
+                  `INSERT INTO categories (name, negocio_id) VALUES ($1, $2) RETURNING id`,
+                  [xlsxRubro, negocioId]
+                );
+                newCatId = catInsert.rows[0].id;
+                catMap.set(xlsxRubro.toLowerCase(), newCatId);
+              }
+            }
+            const ins = await client.query(`
+              INSERT INTO products (code, name, qxb, costo_usd, punto_pedido, active, barcode, box_code, category_id, negocio_id)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+              RETURNING id
+            `, [
+              item.code, xlsxName, xlsxQxB, xlsxCosto,
+              xlsxPtoPedido, xlsxActive ?? true,
+              xlsxBarcode || null, xlsxBoxcode || null, newCatId, negocioId,
+            ]);
+            const newId = ins.rows[0].id;
+
+            // Stock
+            if (includeStock) {
+              for (const [wName, ci] of Object.entries(stockColMap)) {
+                const qty = parseNum(row[ci]) ?? 0;
+                const whId = whMap.get(wName);
+                if (whId) {
+                  await client.query(
+                    `INSERT INTO stock (product_id, warehouse_id, quantity) VALUES ($1,$2,$3)
+                     ON CONFLICT (product_id, warehouse_id) DO UPDATE SET quantity = EXCLUDED.quantity`,
+                    [newId, whId, qty]
+                  );
+                }
+              }
+            }
+
+            // Price overrides para el nuevo
+            const newOvr = {};
+            let hasOvr = false;
+            xlsxPrices.forEach((xlsxP, i) => {
+              if (xlsxP == null || !effectiveCosto || !cotizacion) return;
+              const pctNuevo = (xlsxP / (effectiveCosto * cotizacion) - 1) * 100;
+              if (Math.abs(pctNuevo - globalPct[i]) > PCT_TOL) {
+                newOvr[`pct_${i+1}`] = Math.round(pctNuevo * 10000) / 10000;
+                hasOvr = true;
+              }
+            });
+            if (hasOvr) {
+              await client.query(
+                `INSERT INTO product_price_overrides (product_id, pct_1, pct_2, pct_3, pct_4, pct_5)
+                 VALUES ($1,$2,$3,$4,$5,$6)
+                 ON CONFLICT (product_id) DO UPDATE SET
+                   pct_1=EXCLUDED.pct_1, pct_2=EXCLUDED.pct_2, pct_3=EXCLUDED.pct_3,
+                   pct_4=EXCLUDED.pct_4, pct_5=EXCLUDED.pct_5`,
+                [newId, newOvr.pct_1??null, newOvr.pct_2??null, newOvr.pct_3??null, newOvr.pct_4??null, newOvr.pct_5??null]
+              );
+            }
+          } else {
+            // Actualizar producto existente
+            const existing  = prodMap.get(item.code);
+            const productId = existing.id;
+
+            // Resolver category
+            let resolvedCatId = existing.category_id ?? null;
+            if (xlsxRubro) {
+              const catIdFound = catMap.get(xlsxRubro.toLowerCase());
+              if (catIdFound) {
+                resolvedCatId = catIdFound;
+              } else {
+                const catInsert = await client.query(
+                  `INSERT INTO categories (name, negocio_id) VALUES ($1, $2) RETURNING id`,
+                  [xlsxRubro, negocioId]
+                );
+                resolvedCatId = catInsert.rows[0].id;
+                catMap.set(xlsxRubro.toLowerCase(), resolvedCatId);
+              }
+            }
+
+            await client.query(`
+              UPDATE products SET
+                name        = COALESCE($1, name),
+                costo_usd   = COALESCE($2, costo_usd),
+                qxb         = COALESCE($3, qxb),
+                punto_pedido= COALESCE($4, punto_pedido),
+                active      = COALESCE($5, active),
+                barcode     = COALESCE(NULLIF($6,''), barcode),
+                box_code    = COALESCE(NULLIF($7,''), box_code),
+                category_id = COALESCE($8, category_id)
+              WHERE id = $9
+            `, [
+              xlsxName      || null,
+              xlsxCosto     ?? null,
+              xlsxQxB       ?? null,
+              xlsxPtoPedido ?? null,
+              xlsxActive    ?? null,
+              xlsxBarcode,
+              xlsxBoxcode,
+              resolvedCatId,
+              productId,
+            ]);
+
+            // Stock
+            if (includeStock) {
+              for (const [wName, ci] of Object.entries(stockColMap)) {
+                const qty  = parseNum(row[ci]) ?? 0;
+                const whId = whMap.get(wName);
+                if (whId) {
+                  await client.query(
+                    `INSERT INTO stock (product_id, warehouse_id, quantity) VALUES ($1,$2,$3)
+                     ON CONFLICT (product_id, warehouse_id) DO UPDATE SET quantity = EXCLUDED.quantity`,
+                    [productId, whId, qty]
+                  );
+                }
+              }
+            }
+
+            // Price overrides
+            const newOvr = {};
+            const existingOvrs = extractOverrides(existing) || {};
+            let ovrChanged = false;
+
+            xlsxPrices.forEach((xlsxP, i) => {
+              if (xlsxP == null || !effectiveCosto || !cotizacion) return;
+              const pctNuevo  = (xlsxP / (effectiveCosto * cotizacion) - 1) * 100;
+              const pctGlobal = globalPct[i];
+              if (Math.abs(pctNuevo - pctGlobal) <= PCT_TOL) {
+                newOvr[`pct_${i+1}`] = null; // vuelve al global
+              } else {
+                newOvr[`pct_${i+1}`] = Math.round(pctNuevo * 10000) / 10000;
+              }
+              ovrChanged = true;
+            });
+
+            if (ovrChanged) {
+              const allNull = [1,2,3,4,5].every((n) => {
+                const v = newOvr[`pct_${n}`] ?? existingOvrs[`pct_${n}`] ?? null;
+                return v == null;
+              });
+              if (allNull) {
+                await client.query(`DELETE FROM product_price_overrides WHERE product_id = $1`, [productId]);
+              } else {
+                const merged = [1,2,3,4,5].map((n) =>
+                  newOvr[`pct_${n}`] !== undefined ? newOvr[`pct_${n}`] : (existingOvrs[`pct_${n}`] ?? null)
+                );
+                await client.query(
+                  `INSERT INTO product_price_overrides (product_id, pct_1, pct_2, pct_3, pct_4, pct_5)
+                   VALUES ($1,$2,$3,$4,$5,$6)
+                   ON CONFLICT (product_id) DO UPDATE SET
+                     pct_1=EXCLUDED.pct_1, pct_2=EXCLUDED.pct_2, pct_3=EXCLUDED.pct_3,
+                     pct_4=EXCLUDED.pct_4, pct_5=EXCLUDED.pct_5`,
+                  [productId, ...merged]
+                );
+              }
+            }
+          }
+
+          applied++;
+        } catch (err) {
+          errors.push({ code: item.code, error: err.message });
+        }
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    invalidatePriceConfigCache(negocioId);
+    return { summary, diff, applied, errors };
+  }
 }

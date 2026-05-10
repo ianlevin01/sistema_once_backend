@@ -196,7 +196,7 @@ router.get("/orders", requireAuth, async (req, res) => {
       `SELECT
          w.id, w.total, w.created_at,
          CASE
-           WHEN EXISTS(SELECT 1 FROM public.orders o WHERE o.id = w.order_id AND o.tipo IN ('Presupuesto','Presupuesto Web')) THEN 'completed'
+           WHEN EXISTS(SELECT 1 FROM public.orders o WHERE o.id = w.order_id AND o.tipo IN ('Presupuesto','Presupuesto Web') AND o.deleted_at IS NULL) THEN 'completed'
            WHEN w.reservado = true THEN 'en_preparacion'
            ELSE 'pending'
          END AS status,

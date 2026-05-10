@@ -74,6 +74,40 @@ router.delete("/:id/price-overrides", requireAuth, async (req, res) => {
   return res.status(200).json({ message: "Override eliminado" });
 });
 
+// ── Exportar catálogo a Excel ──────────────────────────────────
+router.get("/export", requireAuth, async (req, res) => {
+  try {
+    const buf = await svc.exportToExcel(req.user.negocio_id);
+    res.setHeader("Content-Disposition", "attachment; filename=productos.xlsx");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    return res.send(buf);
+  } catch (err) {
+    console.error("Error GET /products/export:", err);
+    return res.status(500).json({ message: err.message || "Error generando Excel" });
+  }
+});
+
+// ── Importar Excel (diff + apply) ─────────────────────────────
+router.post("/import", requireAuth, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: "Se requiere el archivo Excel" });
+    const apply         = req.body.apply === "true";
+    const includeStock  = req.body.includeStock !== "false";
+    const selectedCodes = req.body.selectedCodes
+      ? JSON.parse(req.body.selectedCodes)
+      : [];
+    const result = await svc.importFromExcel(
+      req.file.buffer,
+      { includeStock, apply, selectedCodes },
+      req.user.negocio_id
+    );
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("Error POST /products/import:", err);
+    return res.status(400).json({ message: err.message || "Error procesando Excel" });
+  }
+});
+
 // Obtener producto por id
 router.get("/:id", resolveNegocio, async (req, res) => {
   const result = await svc.getById(req.params.id, req.user.negocio_id);

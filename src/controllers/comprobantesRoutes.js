@@ -28,8 +28,10 @@ router.post("/", requireAuth, async (req, res) => {
   try {
     const result = await svc.create({
       ...req.body,
-      user_id:    req.user.id,
-      negocio_id: req.user.negocio_id,
+      user_id:            req.user.id,
+      negocio_id:         req.user.negocio_id,
+      created_by_user_id: req.user.id,
+      created_by_name:    req.user.name,
     });
     return res.status(201).json(result);
   } catch (err) {
@@ -45,7 +47,11 @@ router.put("/:id", requireAuth, async (req, res) => {
     return res.status(400).json({ message: "Se requiere al menos un item" });
   }
   try {
-    const result = await svc.update(id, req.body);
+    const result = await svc.update(id, {
+      ...req.body,
+      edited_by_user_id: req.user.id,
+      edited_by_name:    req.user.name,
+    });
     return res.status(200).json(result);
   } catch (err) {
     console.error("Error PUT /comprobantes/:id:", err);
@@ -133,7 +139,10 @@ router.delete("/:id", requireAuth, async (req, res) => {
     );
     const valid = (await Promise.all(rows.map((u) => bcrypt.compare(password, u.password_hash)))).some(Boolean);
     if (!valid) return res.status(403).json({ message: "Clave incorrecta" });
-    await svc.delete(req.params.id);
+    await svc.delete(req.params.id, {
+      deleted_by_user_id: req.user.id,
+      deleted_by_name:    req.user.name,
+    });
     return res.status(200).json({ message: "Eliminado" });
   } catch (err) {
     console.error("Error DELETE /comprobantes:", err);

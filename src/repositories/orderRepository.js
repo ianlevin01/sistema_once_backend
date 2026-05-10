@@ -143,6 +143,7 @@ export default class OrderRepository {
          AND oi.product_id = $2
          AND o.tipo IN ('Presupuesto', 'Presupuesto Web')
          AND o.status = 'completed'
+         AND o.deleted_at IS NULL
        ORDER BY o.created_at DESC
        LIMIT 1`,
       [customerId, productId]
