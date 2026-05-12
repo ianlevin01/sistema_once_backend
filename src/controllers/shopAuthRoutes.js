@@ -229,7 +229,7 @@ router.get("/orders", requireAuth, async (req, res) => {
           (order.items ?? []).map(async (item) => {
             let imageUrl = null;
             if (item.image) {
-              try { imageUrl = await s3.getSignedUrl(item.image); } catch {}
+              imageUrl = s3.getPublicUrl(item.image);
             }
             return { ...item, image: imageUrl };
           })

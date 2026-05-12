@@ -94,20 +94,15 @@ export default class ProductService {
           ...product,
           prices: buildComputedPrices(costo_usd, config, overrides),
           has_price_override: overrides !== null,
-          images: await this.addSignedUrlsToImages(product.images),
+          images: this.addUrlsToImages(product.images),
         };
       })
     );
   }
 
-  async addSignedUrlsToImages(images) {
+  addUrlsToImages(images) {
     if (!images?.length) return [];
-    return Promise.all(
-      images.map(async (img) => ({
-        ...img,
-        url: await this.s3.getSignedUrl(img.key),
-      }))
-    );
+    return images.map((img) => ({ ...img, url: this.s3.getPublicUrl(img.key) }));
   }
 
   async saveCostIfChanged(productId, newCosto) {
@@ -141,7 +136,7 @@ export default class ProductService {
           ...product,
           prices: buildComputedPrices(costo_usd, config, overrides),
           has_price_override: overrides !== null,
-          images: await this.addSignedUrlsToImages(product.images),
+          images: this.addUrlsToImages(product.images),
         };
       })
     );
@@ -182,7 +177,7 @@ export default class ProductService {
       global_pct_3:       Number(config.pct_3 || 0),
       global_pct_4:       Number(config.pct_4 || 0),
       global_pct_5:       Number(config.pct_5 || 0),
-      images: await this.addSignedUrlsToImages(product.images),
+      images: this.addUrlsToImages(product.images),
     };
   }
 

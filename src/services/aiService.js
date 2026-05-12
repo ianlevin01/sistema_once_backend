@@ -78,7 +78,7 @@ ${JSON.stringify(productContext)}
         if (!p) return null;
         let image_url = null;
         if (p.images?.length > 0) {
-          try { image_url = await this.s3.getSignedUrl(p.images[0].key); } catch {}
+          image_url = this.s3.getPublicUrl(p.images[0].key);
         }
         return { id: p.id, name: p.name, image_url };
       })

@@ -2,10 +2,8 @@ import {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
-  GetObjectCommand
 } from "@aws-sdk/client-s3";
 
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { v4 as uuid } from "uuid";
 
 
@@ -50,22 +48,7 @@ const BUCKET = "onces3";
     }));
   }
 
-  async getSignedUrl(key) {
-    const s3 = new S3Client({
-  region: "sa-east-1",
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY,
-    secretAccessKey:process.env.AWS_SECRET_KEY
-  }
-});
-
-const BUCKET = "onces3";
-
-    const command = new GetObjectCommand({
-      Bucket: BUCKET,
-      Key: key
-    });
-
-    return await getSignedUrl(s3, command, { expiresIn: 3600 });
+  getPublicUrl(key) {
+    return `https://${process.env.CLOUDFRONT_DOMAIN}/${key}`;
   }
 }
