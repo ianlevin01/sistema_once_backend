@@ -53,6 +53,56 @@ function shell(bodyHtml) {
 </body></html>`;
 }
 
+export async function sendOrderReceivedEmail({ to, customerName, orderId, items, total, observaciones }) {
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return;
+  if (!to) return;
+  const shortId = String(orderId).slice(-6).toUpperCase();
+  const html = shell(`
+    <div style="background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border:1.5px solid #4ade80;border-radius:12px;padding:22px 24px;margin-bottom:28px;text-align:center;">
+      <div style="font-size:40px;margin-bottom:8px;">🎉</div>
+      <p style="margin:0;font-size:20px;font-weight:800;color:#15803d;letter-spacing:-.3px;">¡Pedido recibido!</p>
+      <p style="margin:8px 0 0;font-size:13px;color:#6b7280;letter-spacing:.04em;">Número de pedido <strong style="color:#374151;">#${shortId}</strong></p>
+    </div>
+
+    <p style="font-size:15px;color:#374151;margin:0 0 6px;">Hola <strong>${customerName || 'cliente'}</strong>,</p>
+    <p style="font-size:15px;color:#374151;margin:0 0 20px;">Tu pedido fue registrado correctamente. Nuestro equipo lo revisará y te contactará para coordinar la entrega.</p>
+
+    <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin:0 0 4px;">Resumen del pedido</p>
+    ${itemsTable(items)}
+
+    ${total ? `
+    <div style="display:flex;justify-content:flex-end;margin:4px 0 24px;">
+      <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px 20px;text-align:right;">
+        <span style="font-size:13px;color:#6b7280;margin-right:16px;">Total del pedido</span>
+        <span style="font-size:18px;font-weight:800;color:#1d4ed8;">$${Number(total).toLocaleString('es-AR')}</span>
+      </div>
+    </div>` : ''}
+
+    ${observaciones ? `
+    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin-bottom:24px;">
+      <p style="margin:0;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#92400e;">Observaciones</p>
+      <p style="margin:4px 0 0;font-size:14px;color:#374151;">${observaciones}</p>
+    </div>` : ''}
+
+    <div style="background:#eff6ff;border-radius:10px;padding:16px 20px;margin-bottom:8px;">
+      <p style="margin:0;font-size:14px;color:#1d4ed8;font-weight:600;">¿Qué sigue?</p>
+      <p style="margin:6px 0 0;font-size:13px;color:#374151;">Revisaremos tu pedido y te enviaremos otro correo cuando esté listo o tengamos novedades.</p>
+    </div>
+
+    <p style="font-size:13px;color:#9ca3af;margin:20px 0 0;text-align:center;">¡Gracias por confiar en <strong style="color:#1d4ed8;">Oncepuntos</strong>! 🛍️</p>
+  `);
+  try {
+    await getTransporter().sendMail({
+      from: getFrom(),
+      to,
+      subject: `✅ Tu pedido #${shortId} fue recibido — Oncepuntos`,
+      html,
+    });
+  } catch (err) {
+    console.error('emailService received:', err.message);
+  }
+}
+
 export async function sendOrderPreparationEmail({ to, customerName, orderId, items, total }) {
   if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return;
   const shortId = String(orderId).slice(-6).toUpperCase();

@@ -1,7 +1,7 @@
 import pool from "../database/db.js";
 import WebOrderRepository from "../repositories/webOrderRepository.js";
 import ComprobanteService from "./comprobanteService.js";
-import { sendOrderPreparationEmail } from "./emailService.js";
+import { sendOrderPreparationEmail, sendOrderReceivedEmail } from "./emailService.js";
 
 export default class WebOrderService {
   repo        = new WebOrderRepository();
@@ -117,7 +117,21 @@ export default class WebOrderService {
 
       await client.query("COMMIT");
 
-      return await this.repo.getById(order.id);
+      const full = await this.repo.getById(order.id);
+
+      const email = full.customer_email;
+      if (email) {
+        sendOrderReceivedEmail({
+          to:           email,
+          customerName: full.customer_name,
+          orderId:      full.id,
+          items:        full.items || [],
+          total:        full.total,
+          observaciones: full.observaciones,
+        }).catch(() => {});
+      }
+
+      return full;
 
     } catch (err) {
       await client.query("ROLLBACK");

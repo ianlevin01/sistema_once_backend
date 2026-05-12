@@ -48,6 +48,29 @@ router.get("/search", resolveNegocio, async (req, res) => {
   return res.status(200).json(result);
 });
 
+// Agregar stock al warehouse del usuario (solo suma, sin reposición)
+router.patch("/:id/stock", requireAuth, async (req, res) => {
+  const warehouseId = req.user.warehouse_id;
+  if (!warehouseId) {
+    return res.status(400).json({ message: "Tu usuario no tiene un depósito asignado. Pedile a un administrador que te asigne uno." });
+  }
+  const qty = Number(req.body.quantity);
+  if (!qty || qty <= 0) return res.status(400).json({ message: "La cantidad debe ser mayor a 0" });
+
+  await pool.query(
+    `INSERT INTO stock (product_id, warehouse_id, quantity)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (product_id, warehouse_id)
+     DO UPDATE SET quantity = stock.quantity + EXCLUDED.quantity`,
+    [req.params.id, warehouseId, qty]
+  );
+  const { rows } = await pool.query(
+    `SELECT quantity FROM stock WHERE product_id = $1 AND warehouse_id = $2`,
+    [req.params.id, warehouseId]
+  );
+  return res.json({ quantity: rows[0]?.quantity ?? qty });
+});
+
 // Subir producto (actualiza created_at a NOW para que aparezca primero)
 router.patch("/:id/subir", requireAuth, async (req, res) => {
   await pool.query("UPDATE products SET created_at = NOW() WHERE id = $1", [req.params.id]);

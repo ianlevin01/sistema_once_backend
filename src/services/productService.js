@@ -110,9 +110,12 @@ export default class ProductService {
     );
   }
 
-  async saveCost(productId, p) {
-    if (p.cost != null && p.cost !== "") {
-      await this.repo.insertCost(productId, p.cost);
+  async saveCostIfChanged(productId, newCosto) {
+    if (newCosto == null || newCosto === "") return;
+    const current = await this.repo.getById(productId);
+    const oldCosto = current?.costo_usd != null ? Number(current.costo_usd) : null;
+    if (oldCosto !== null && oldCosto !== Number(newCosto)) {
+      await this.repo.insertCost(productId, oldCosto);
     }
   }
 
@@ -193,7 +196,6 @@ export default class ProductService {
       }
     }
     const product = await this.repo.create({ ...p, negocio_id: negocioId });
-    await this.saveCost(product.id, p);
 
     if (files?.length) {
       const uploads = await Promise.all(files.map((file) => this.s3.upload(file)));
@@ -206,8 +208,8 @@ export default class ProductService {
   }
 
   async update(id, p, files, negocioId) {
+    await this.saveCostIfChanged(id, p.costo_usd);
     await this.repo.update(id, p);
-    await this.saveCost(id, p);
 
     const keepKeys =
       p.keepImages === undefined
@@ -631,6 +633,15 @@ export default class ProductService {
                 resolvedCatId = catInsert.rows[0].id;
                 catMap.set(xlsxRubro.toLowerCase(), resolvedCatId);
               }
+            }
+
+            // Guardar costo anterior si cambió
+            if (xlsxCosto != null && existing.costo_usd != null &&
+                Math.abs(Number(existing.costo_usd) - xlsxCosto) > 0.0001) {
+              await client.query(
+                `INSERT INTO product_costs (product_id, cost) VALUES ($1, $2)`,
+                [productId, Number(existing.costo_usd)]
+              );
             }
 
             await client.query(`
