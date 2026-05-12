@@ -50,6 +50,7 @@ export default class ProductRepository {
       ${SELECT}
       WHERE (p.name ILIKE $1 OR p.code ILIKE $1) AND p.negocio_id = $2 AND p.deleted_at IS NULL
       ORDER BY p.created_at DESC
+      LIMIT 100
     `, [`%${name}%`, negocioId]);
     return res.rows;
   }
