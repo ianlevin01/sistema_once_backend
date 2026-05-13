@@ -39,8 +39,8 @@ export default class CustomerRepository {
     const res = await pool.query(
       `INSERT INTO customers
          (name, type, document, phone, email,
-          domicilio, codigo_postal, transporte, divisa, vendedor, negocio_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          domicilio, localidad, provincia, codigo_postal, transporte, divisa, vendedor, negocio_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING *`,
       [
         customer.name,
@@ -49,6 +49,8 @@ export default class CustomerRepository {
         customer.phone         || null,
         customer.email         || null,
         customer.domicilio     || null,
+        customer.localidad     || null,
+        customer.provincia     || null,
         customer.codigo_postal || null,
         customer.transporte    || "DON ALFREDO",
         customer.divisa        || "ARS",
@@ -63,15 +65,17 @@ export default class CustomerRepository {
     const res = await pool.query(
       `UPDATE customers
        SET name=$1, phone=$2, email=$3,
-           domicilio=$4, codigo_postal=$5,
-           transporte=$6, divisa=$7, vendedor=$8
-       WHERE id=$9
+           domicilio=$4, localidad=$5, provincia=$6,
+           codigo_postal=$7, transporte=$8, divisa=$9, vendedor=$10
+       WHERE id=$11
        RETURNING *`,
       [
         customer.name,
         customer.phone         || null,
         customer.email         || null,
         customer.domicilio     || null,
+        customer.localidad     || null,
+        customer.provincia     || null,
         customer.codigo_postal || null,
         customer.transporte    || null,
         customer.divisa        || "ARS",

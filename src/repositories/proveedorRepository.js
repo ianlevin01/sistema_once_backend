@@ -262,7 +262,7 @@ export default class ProveedorRepository {
   }
 
   // ── Registrar cobranza del proveedor (nos devuelve dinero) ─────
-  async registrarCobranza(proveedorId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, negocio_id }) {
+  async registrarCobranza(proveedorId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, negocio_id, fecha }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -284,8 +284,8 @@ export default class ProveedorRepository {
       await client.query(
         `INSERT INTO cc_movimientos_prov
            (cuenta_corriente_id, tipo, concepto, monto, metodo_pago,
-            divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-         VALUES ($1,'debito',$2,$3,$4,$5,$6,$7,$8)`,
+            divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, created_at)
+         VALUES ($1,'debito',$2,$3,$4,$5,$6,$7,$8, COALESCE($9::date, NOW()))`,
         [
           cc.id,
           concepto || "Cobranza proveedor",
@@ -295,6 +295,7 @@ export default class ProveedorRepository {
           divisaCobro,
           monto,
           divisaCobro !== divisa ? cotizacion : null,
+          fecha || null,
         ]
       );
 

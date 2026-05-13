@@ -238,7 +238,7 @@ export default class CuentaCorrienteRepository {
   }
 
   // ── Registrar cobranza (CC + cash_movements) ───────────────
-  async registrarCobranza(customerId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, negocio_id, warehouse_id }) {
+  async registrarCobranza(customerId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, negocio_id, warehouse_id, fecha }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -261,8 +261,8 @@ export default class CuentaCorrienteRepository {
       await client.query(
         `INSERT INTO cc_movimientos
            (cuenta_corriente_id, tipo, concepto, monto, metodo_pago,
-            divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, warehouse_id)
-         VALUES ($1,'pago',$2,$3,$4,$5,$6,$7,$8,$9)`,
+            divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, warehouse_id, created_at)
+         VALUES ($1,'pago',$2,$3,$4,$5,$6,$7,$8,$9, COALESCE($10::date, NOW()))`,
         [
           cuenta.id,
           concepto || "Cobranza",
@@ -273,6 +273,7 @@ export default class CuentaCorrienteRepository {
           monto,
           divisaCobro !== divisa ? cotizacion : null,
           warehouse_id || null,
+          fecha || null,
         ]
       );
 

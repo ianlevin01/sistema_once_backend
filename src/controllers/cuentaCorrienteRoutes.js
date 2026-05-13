@@ -62,7 +62,7 @@ router.post("/cliente/:customerId/saldo", requireAuth, async (req, res) => {
 
 // POST registrar cobranza
 router.post("/cliente/:customerId/cobranza", requireAuth, async (req, res) => {
-  const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual } = req.body;
+  const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, fecha } = req.body;
   if (!monto || Number(monto) <= 0)
     return res.status(400).json({ message: "Monto inválido" });
   if (!metodo_pago)
@@ -76,6 +76,7 @@ router.post("/cliente/:customerId/cobranza", requireAuth, async (req, res) => {
       cotizacion_manual: cotizacion_manual ? Number(cotizacion_manual) : null,
       negocio_id:       req.user.negocio_id,
       warehouse_id:     req.user.warehouse_id || null,
+      fecha:            fecha || null,
     });
     return res.status(200).json(result);
   } catch (err) {
@@ -87,7 +88,7 @@ router.post("/cliente/:customerId/cobranza", requireAuth, async (req, res) => {
 // PUT /movimientos/:movId  — editar un movimiento de cliente
 router.put("/movimientos/:movId", requireAuth, async (req, res) => {
   const { movId } = req.params;
-  const { monto, concepto, metodo_pago } = req.body;
+  const { monto, concepto, metodo_pago, fecha } = req.body;
 
   const client = await pool.connect();
   try {
@@ -123,6 +124,7 @@ router.put("/movimientos/:movId", requireAuth, async (req, res) => {
     if (monto      !== undefined) updates.monto      = montoNuevo;
     if (concepto   !== undefined) updates.concepto   = concepto;
     if (metodo_pago !== undefined) updates.metodo_pago = metodo_pago;
+    if (fecha      !== undefined && fecha !== null) updates.created_at = fecha;
 
     if (Object.keys(updates).length > 0) {
       const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);
