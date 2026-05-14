@@ -316,7 +316,7 @@ export default class ProductService {
   // ─────────────────────────────────────────────────────────────
   // IMPORTAR DESDE EXCEL
   // ─────────────────────────────────────────────────────────────
-  async importFromExcel(buffer, { includeStock = true, apply = false, selectedCodes = [] }, negocioId) {
+  async importFromExcel(buffer, { includeStock = true, apply = false, selectedCodes = [], userName = null }, negocioId) {
     // ── 1. Parsear el Excel ──────────────────────────────────────
     const wb      = XLSX.read(buffer, { type: 'buffer' });
     const ws      = wb.Sheets[wb.SheetNames[0]];
@@ -584,6 +584,12 @@ export default class ProductService {
                      ON CONFLICT (product_id, warehouse_id) DO UPDATE SET quantity = EXCLUDED.quantity`,
                     [newId, whId, qty]
                   );
+                  if (qty !== 0) {
+                    await client.query(
+                      `INSERT INTO stock_manual_movements (negocio_id, product_id, warehouse_id, delta, source, created_by) VALUES ($1,$2,$3,$4,'excel',$5)`,
+                      [negocioId, newId, whId, qty, userName]
+                    ).catch(() => {});
+                  }
                 }
               }
             }
@@ -668,11 +674,23 @@ export default class ProductService {
                 const qty  = parseNum(row[ci]) ?? 0;
                 const whId = whMap.get(wName);
                 if (whId) {
+                  const oldRes = await client.query(
+                    `SELECT quantity FROM stock WHERE product_id = $1 AND warehouse_id = $2`,
+                    [productId, whId]
+                  );
+                  const oldQty = oldRes.rows[0]?.quantity ?? 0;
                   await client.query(
                     `INSERT INTO stock (product_id, warehouse_id, quantity) VALUES ($1,$2,$3)
                      ON CONFLICT (product_id, warehouse_id) DO UPDATE SET quantity = EXCLUDED.quantity`,
                     [productId, whId, qty]
                   );
+                  const delta = qty - oldQty;
+                  if (delta !== 0) {
+                    await client.query(
+                      `INSERT INTO stock_manual_movements (negocio_id, product_id, warehouse_id, delta, source, created_by) VALUES ($1,$2,$3,$4,'excel',$5)`,
+                      [negocioId, productId, whId, delta, userName]
+                    ).catch(() => {});
+                  }
                 }
               }
             }

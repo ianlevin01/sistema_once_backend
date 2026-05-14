@@ -238,7 +238,9 @@ export default class CuentaCorrienteRepository {
   }
 
   // ── Registrar cobranza (CC + cash_movements) ───────────────
-  async registrarCobranza(customerId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, negocio_id, warehouse_id, fecha }) {
+  // tipo_mov: "haber" (default) = cliente paga → saldo baja
+  //           "debe"            = cargo manual  → saldo sube, sin cash
+  async registrarCobranza(customerId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, negocio_id, warehouse_id, fecha, tipo_mov = "haber" }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -258,16 +260,23 @@ export default class CuentaCorrienteRepository {
 
       const montoEnCuenta = convertir(monto, divisaCobro, divisa, cotizacion);
 
+      // Debe = cargo al cliente (debe más) → saldo sube
+      // Haber = cobro al cliente (se le resta) → saldo baja
+      const esDebe = tipo_mov !== "haber";
+      const tipoCC = esDebe ? "debito" : "pago";
+      const saldoDelta = esDebe ? montoEnCuenta : -montoEnCuenta;
+
       await client.query(
         `INSERT INTO cc_movimientos
            (cuenta_corriente_id, tipo, concepto, monto, metodo_pago,
             divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, warehouse_id, created_at)
-         VALUES ($1,'pago',$2,$3,$4,$5,$6,$7,$8,$9, COALESCE($10::date, NOW()))`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE($11::date, NOW()))`,
         [
           cuenta.id,
-          concepto || "Cobranza",
+          tipoCC,
+          concepto || (esDebe ? "Cobranza" : "Cargo manual"),
           montoEnCuenta,
-          metodo_pago,
+          metodo_pago || null,
           divisa,
           divisaCobro,
           monto,
@@ -279,17 +288,19 @@ export default class CuentaCorrienteRepository {
 
       await client.query(
         `UPDATE cuentas_corrientes
-         SET saldo = saldo - $1, updated_at = NOW()
+         SET saldo = saldo + $1, updated_at = NOW()
          WHERE id = $2`,
-        [montoEnCuenta, cuenta.id]
+        [saldoDelta, cuenta.id]
       );
 
-      const montoARS = convertir(monto, divisaCobro, "ARS", cotizacion);
-      await client.query(
-        `INSERT INTO cash_movements (type, source, amount, reference_id, negocio_id, warehouse_id)
-         VALUES ('ingreso', $1, $2, $3, $4, $5)`,
-        [metodo_pago, montoARS, cuenta.id, negocio_id_resolved, warehouse_id || null]
-      );
+      if (!esDebe) {
+        const montoARS = convertir(monto, divisaCobro, "ARS", cotizacion);
+        await client.query(
+          `INSERT INTO cash_movements (type, source, amount, reference_id, negocio_id, warehouse_id)
+           VALUES ('ingreso', $1, $2, $3, $4, $5)`,
+          [metodo_pago, montoARS, cuenta.id, negocio_id_resolved, warehouse_id || null]
+        );
+      }
 
       await client.query("COMMIT");
 

@@ -261,8 +261,10 @@ export default class ProveedorRepository {
     }
   }
 
-  // ── Registrar cobranza del proveedor (nos devuelve dinero) ─────
-  async registrarCobranza(proveedorId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, negocio_id, fecha }) {
+  // ── Registrar movimiento manual proveedor ─────────────────────
+  // tipo_mov: "debe" (default) = reduce deuda del negocio → saldo baja
+  //           "haber"          = aumenta deuda del negocio → saldo sube
+  async registrarCobranza(proveedorId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, negocio_id, fecha, tipo_mov = "debe" }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -273,12 +275,14 @@ export default class ProveedorRepository {
       const divisaCobro = divisa_cobro ?? divisa;
 
       const montoEnCuenta = convertir(monto, divisaCobro, divisa, cotizacion);
+      const esDebe = tipo_mov !== "haber";
+      const saldoDelta = esDebe ? -montoEnCuenta : montoEnCuenta;
 
       await client.query(
         `UPDATE cuentas_corrientes_prov
-         SET saldo = saldo - $1, updated_at = now()
+         SET saldo = saldo + $1, updated_at = now()
          WHERE id = $2`,
-        [montoEnCuenta, cc.id]
+        [saldoDelta, cc.id]
       );
 
       await client.query(
@@ -288,7 +292,7 @@ export default class ProveedorRepository {
          VALUES ($1,'debito',$2,$3,$4,$5,$6,$7,$8, COALESCE($9::date, NOW()))`,
         [
           cc.id,
-          concepto || "Cobranza proveedor",
+          concepto || (esDebe ? "Pago / crédito proveedor" : "Cargo / deuda adicional"),
           montoEnCuenta,
           metodo_pago || null,
           divisa,

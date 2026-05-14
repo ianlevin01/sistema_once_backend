@@ -64,6 +64,12 @@ router.patch("/:id/stock", requireAuth, async (req, res) => {
      DO UPDATE SET quantity = stock.quantity + EXCLUDED.quantity`,
     [req.params.id, warehouseId, qty]
   );
+  // Track manual adjustment
+  await pool.query(
+    `INSERT INTO stock_manual_movements (negocio_id, product_id, warehouse_id, delta, source, created_by)
+     VALUES ($1, $2, $3, $4, 'manual', $5)`,
+    [req.user.negocio_id, req.params.id, warehouseId, qty, req.user.name || null]
+  ).catch(() => {}); // non-blocking — don't fail the stock update if tracking fails
   const { rows } = await pool.query(
     `SELECT quantity FROM stock WHERE product_id = $1 AND warehouse_id = $2`,
     [req.params.id, warehouseId]
@@ -121,7 +127,7 @@ router.post("/import", requireAuth, upload.single("file"), async (req, res) => {
       : [];
     const result = await svc.importFromExcel(
       req.file.buffer,
-      { includeStock, apply, selectedCodes },
+      { includeStock, apply, selectedCodes, userName: req.user.name || null },
       req.user.negocio_id
     );
     return res.status(200).json(result);

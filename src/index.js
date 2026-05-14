@@ -18,6 +18,7 @@ import userRoutes from "./controllers/userRoutes.js";
 import proveedorRoutes       from "./controllers/proveedorRoutes.js";
 import transportesRoutes     from "./controllers/transportesRoutes.js";
 import transportRemitosRoutes from "./controllers/transportRemitosRoutes.js";
+import stockRoutes             from "./controllers/stockRoutes.js";
 
 
 dotenv.config();
@@ -58,6 +59,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/proveedores",        proveedorRoutes);
 app.use("/api/transportes",        transportesRoutes);
 app.use("/api/transport-remitos",  transportRemitosRoutes);
+app.use("/api/stock",              stockRoutes);
 
 // Server
 app.listen(PORT, "0.0.0.0", () => {

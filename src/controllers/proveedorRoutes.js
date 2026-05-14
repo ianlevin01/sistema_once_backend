@@ -119,21 +119,22 @@ router.post("/:id/pago", requireAuth, async (req, res) => {
   }
 });
 
-// ── Registrar cobranza del proveedor ─────────────────────────
+// ── Registrar movimiento manual proveedor (Debe / Haber) ─────
 router.post("/:id/cobranza", requireAuth, async (req, res) => {
-  const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, fecha } = req.body;
+  const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, fecha, tipo_mov } = req.body;
   if (!monto || Number(monto) <= 0) {
     return res.status(400).json({ message: "Monto inválido" });
   }
   try {
     const result = await repo.registrarCobranza(req.params.id, {
       monto:             Number(monto),
-      concepto:          concepto || "Cobranza proveedor",
+      concepto:          concepto || null,
       metodo_pago,
       divisa_cobro,
       cotizacion_manual: cotizacion_manual ? Number(cotizacion_manual) : null,
       negocio_id:        req.user.negocio_id,
       fecha:             fecha || null,
+      tipo_mov:          tipo_mov || "debe",
     });
     return res.status(200).json(result);
   } catch (err) {

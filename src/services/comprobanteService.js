@@ -278,8 +278,8 @@ export default class ComprobanteService {
         }
       }
 
-      // ── Reposición → acreditar CC proveedor ─────────────────
-      if (esReposicion && data.supplier_id && totalARS > 0) {
+      // ── Reposición → acreditar CC proveedor (solo si Cta Cte) ──
+      if (esReposicion && esCuentaCorriente && data.supplier_id && totalARS > 0) {
         await this.proveedorRepo.acreditarReposicion(
           data.supplier_id, { monto: totalARS, orderId: orderRow.id, negocio_id: data.negocio_id }, client
         );
@@ -639,35 +639,73 @@ export default class ComprobanteService {
         }
       }
 
-      // CC proveedor (reposición o devol a proveedor) — solo delta de monto
-      if (totalDelta !== 0 && (esReposicion || esDevolProv) && order.supplier_id) {
+      // CC proveedor (reposición o devol a proveedor) — maneja cambio de método de pago
+      if ((esReposicion || esDevolProv) && order.supplier_id && (wasCtaCte || isCtaCte)) {
         const cotizRes = await client.query(
           `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
           [order.negocio_id]
         );
         const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
-        const ccProv        = await this.proveedorRepo.getOrCreateCC(order.supplier_id, client);
-        const divisaCC      = ccProv.divisa ?? "ARS";
-        const deltaEnCuenta = divisaCC === "USD" ? totalDelta / cotizacion : totalDelta;
+        const ccProv   = await this.proveedorRepo.getOrCreateCC(order.supplier_id, client);
+        const divisaCC = ccProv.divisa ?? "ARS";
 
-        if (deltaEnCuenta !== 0) {
-          const saldoDelta = esReposicion ? deltaEnCuenta : -deltaEnCuenta;
-          await client.query(
-            `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
-            [saldoDelta, ccProv.id]
+        if (paymentMethodChanged && wasCtaCte && !isCtaCte) {
+          // Cambio DE Cta Cte A otro método: revertir todos los movimientos de este comprobante
+          const movsProv = await client.query(
+            `SELECT id, tipo, monto FROM cc_movimientos_prov WHERE order_id = $1`, [id]
           );
-          await client.query(
-            `INSERT INTO cc_movimientos_prov
-               (cuenta_corriente_id, tipo, concepto, monto, order_id,
-                divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-            [ccProv.id,
-             saldoDelta > 0 ? "pago" : "debito",
-             `Ajuste edición — ${id.slice(0,8)}`,
-             Math.abs(deltaEnCuenta), id,
-             divisaCC, "ARS", Math.abs(totalDelta),
-             divisaCC === "USD" ? cotizacion : null]
-          );
+          for (const mov of movsProv.rows) {
+            const saldoDelta = mov.tipo === "pago" ? -Number(mov.monto) : Number(mov.monto);
+            if (saldoDelta !== 0) {
+              await client.query(
+                `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+                [saldoDelta, ccProv.id]
+              );
+            }
+            await client.query(`DELETE FROM cc_movimientos_prov WHERE id = $1`, [mov.id]);
+          }
+        } else if (paymentMethodChanged && !wasCtaCte && isCtaCte) {
+          // Cambio A Cta Cte desde otro método: aplicar monto completo
+          const montoEnCuenta = divisaCC === "USD" ? newTotalARS / cotizacion : newTotalARS;
+          if (montoEnCuenta !== 0) {
+            const saldoDelta = esReposicion ? montoEnCuenta : -montoEnCuenta;
+            await client.query(
+              `INSERT INTO cc_movimientos_prov
+                 (cuenta_corriente_id, tipo, concepto, monto, order_id,
+                  divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+              [ccProv.id, saldoDelta > 0 ? "pago" : "debito",
+               `Aplicación Cta Cte — ${id.slice(0, 8)}`,
+               Math.abs(montoEnCuenta), id,
+               divisaCC, "ARS", Math.abs(newTotalARS),
+               divisaCC === "USD" ? cotizacion : null]
+            );
+            await client.query(
+              `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+              [saldoDelta, ccProv.id]
+            );
+          }
+        } else if (isCtaCte && totalDelta !== 0) {
+          // Mismo método Cta Cte, solo cambió el monto
+          const deltaEnCuenta = divisaCC === "USD" ? totalDelta / cotizacion : totalDelta;
+          if (deltaEnCuenta !== 0) {
+            const saldoDelta = esReposicion ? deltaEnCuenta : -deltaEnCuenta;
+            await client.query(
+              `UPDATE cuentas_corrientes_prov SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+              [saldoDelta, ccProv.id]
+            );
+            await client.query(
+              `INSERT INTO cc_movimientos_prov
+                 (cuenta_corriente_id, tipo, concepto, monto, order_id,
+                  divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+              [ccProv.id, saldoDelta > 0 ? "pago" : "debito",
+               `Ajuste edición — ${id.slice(0, 8)}`,
+               Math.abs(deltaEnCuenta), id,
+               divisaCC, "ARS", Math.abs(totalDelta),
+               divisaCC === "USD" ? cotizacion : null]
+            );
+          }
         }
       }
 
@@ -970,6 +1008,7 @@ export default class ComprobanteService {
         LEFT JOIN proveedores pr ON pr.id = o.supplier_id
         LEFT JOIN payments    p  ON p.order_id = o.id
         WHERE o.tipo IN ('Presupuesto', 'Presupuesto Web', 'Devolucion')
+          AND o.deleted_at IS NULL
           AND o.created_at BETWEEN $1 AND $2
           ${presNegocioFilter}
           ${presWhFilter}

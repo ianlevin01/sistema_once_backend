@@ -62,21 +62,23 @@ router.post("/cliente/:customerId/saldo", requireAuth, async (req, res) => {
 
 // POST registrar cobranza
 router.post("/cliente/:customerId/cobranza", requireAuth, async (req, res) => {
-  const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, fecha } = req.body;
+  const { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, fecha, tipo_mov } = req.body;
   if (!monto || Number(monto) <= 0)
     return res.status(400).json({ message: "Monto inválido" });
-  if (!metodo_pago)
+  // método de pago obligatorio solo para cobros (Haber)
+  if (tipo_mov !== "debe" && !metodo_pago)
     return res.status(400).json({ message: "Método de pago obligatorio" });
   try {
     const result = await svc.registrarCobranza(req.params.customerId, {
       monto:            Number(monto),
-      concepto:         concepto || "Cobranza",
-      metodo_pago,
+      concepto:         concepto || (tipo_mov === "debe" ? "Cargo manual" : "Cobranza"),
+      metodo_pago:      metodo_pago || null,
       divisa_cobro:     divisa_cobro || null,
       cotizacion_manual: cotizacion_manual ? Number(cotizacion_manual) : null,
       negocio_id:       req.user.negocio_id,
       warehouse_id:     req.user.warehouse_id || null,
       fecha:            fecha || null,
+      tipo_mov:         tipo_mov || "haber",
     });
     return res.status(200).json(result);
   } catch (err) {
