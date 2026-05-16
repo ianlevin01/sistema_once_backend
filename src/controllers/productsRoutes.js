@@ -83,6 +83,30 @@ router.patch("/:id/subir", requireAuth, async (req, res) => {
   return res.status(200).json({ ok: true });
 });
 
+// Reordenar productos — guarda el orden via created_at
+router.post("/reorder", requireAuth, async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ message: "Se requiere un array de ids" });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const base = new Date();
+    for (let i = 0; i < ids.length; i++) {
+      const ts = new Date(base.getTime() - i * 1000).toISOString();
+      await client.query(`UPDATE products SET created_at = $1 WHERE id = $2`, [ts, ids[i]]);
+    }
+    await client.query("COMMIT");
+    return res.json({ ok: true });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    return res.status(500).json({ message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // ── Price overrides por producto ──────────────────────────────
 router.get("/:id/price-overrides", requireAuth, async (req, res) => {
   const result = await svc.getOverride(req.params.id);

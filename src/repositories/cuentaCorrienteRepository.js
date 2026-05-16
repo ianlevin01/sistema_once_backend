@@ -99,6 +99,7 @@ export default class CuentaCorrienteRepository {
         c.document AS customer_document,
         c.email    AS customer_email,
         c.phone    AS customer_phone,
+        c.vendedor AS customer_vendedor,
         agg.ultimo_debito,
         agg.ultimo_pago
       FROM cuentas_corrientes cc
@@ -270,7 +271,7 @@ export default class CuentaCorrienteRepository {
         `INSERT INTO cc_movimientos
            (cuenta_corriente_id, tipo, concepto, monto, metodo_pago,
             divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, warehouse_id, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE($11::date, NOW()))`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE(($11::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires', NOW()))`,
         [
           cuenta.id,
           tipoCC,
