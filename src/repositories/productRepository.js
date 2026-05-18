@@ -55,27 +55,23 @@ export default class ProductRepository {
     return res.rows;
   }
 
-  async getPaginated(limit = 30, offset = 0, categoryId = null, sort = "default", negocioId) {
-    const params = categoryId ? [limit, offset, categoryId, negocioId] : [limit, offset, negocioId];
-    const negocioParam = categoryId ? 4 : 3;
-    const whereClause = categoryId
-      ? `WHERE p.category_id = $3 AND p.negocio_id = $${negocioParam} AND p.deleted_at IS NULL AND p.active = true`
-      : `WHERE p.negocio_id = $${negocioParam} AND p.deleted_at IS NULL AND p.active = true`;
-
-    const ORDER_MAP = {
-      price_asc:  "price_asc",
-      price_desc: "price_desc",
-      name_asc:   "p.name ASC",
-      name_desc:  "p.name DESC",
-    };
-
+  async getPaginated(limit = 30, offset = 0, categoryId = null, sort = "default", negocioId, maxPrice = null, cotizacion = null, globalPct1 = null) {
     let orderClause;
     if (sort === "price_asc" || sort === "price_desc") {
       const dir = sort === "price_asc" ? "ASC" : "DESC";
       orderClause = `p.costo_usd ${dir} NULLS LAST`;
     } else {
+      const ORDER_MAP = { name_asc: "p.name ASC", name_desc: "p.name DESC" };
       orderClause = ORDER_MAP[sort] ?? "p.created_at DESC";
     }
+
+    const params = [
+      limit, offset, negocioId,
+      categoryId ?? null,
+      maxPrice   ?? null,
+      cotizacion ?? null,
+      globalPct1 ?? null,
+    ];
 
     const res = await pool.query(`
       SELECT
@@ -108,7 +104,12 @@ export default class ProductRepository {
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       LEFT JOIN product_price_overrides ppo ON ppo.product_id = p.id
-      ${whereClause}
+      WHERE p.negocio_id = $3
+        AND p.deleted_at IS NULL
+        AND p.active = true
+        AND ($4::uuid IS NULL OR p.category_id = $4::uuid)
+        AND ($5::numeric IS NULL OR p.costo_usd IS NULL
+             OR p.costo_usd * $6::numeric * (1 + COALESCE(ppo.pct_1, $7::numeric) / 100.0) <= $5::numeric)
       ORDER BY ${orderClause}
       LIMIT $1 OFFSET $2
     `, params);

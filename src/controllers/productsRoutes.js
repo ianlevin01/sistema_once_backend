@@ -169,8 +169,9 @@ router.get("/:id", resolveNegocio, async (req, res) => {
 });
 
 router.get("/", resolveNegocio, async (req, res) => {
-  const { limit = 30, offset = 0, category_id, sort = "default" } = req.query;
-  const result = await svc.getPaginated(limit, offset, category_id ?? null, sort, req.user.negocio_id);
+  const { limit = 30, offset = 0, category_id, sort = "default", max_price } = req.query;
+  const maxPrice = max_price ? Number(max_price) : null;
+  const result = await svc.getPaginated(limit, offset, category_id ?? null, sort, req.user.negocio_id, maxPrice);
   return res.json(result);
 });
 
