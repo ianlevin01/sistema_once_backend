@@ -2,6 +2,7 @@ import pool from "../database/db.js";
 import WebOrderRepository from "../repositories/webOrderRepository.js";
 import ComprobanteService from "./comprobanteService.js";
 import { sendOrderPreparationEmail, sendOrderReceivedEmail } from "./emailService.js";
+import { importShipping } from "./correoArgentinoService.js";
 
 export default class WebOrderService {
   repo        = new WebOrderRepository();
@@ -64,6 +65,51 @@ export default class WebOrderService {
               total:        webOrder.total,
             }).catch(() => {});
           }
+
+          // Importar envío a Correo Argentino si hay datos de shipping
+          const shippingRow = await pool.query(
+            "SELECT * FROM order_shipping WHERE web_order_id = $1 LIMIT 1", [id]
+          );
+          if (shippingRow.rows.length > 0) {
+            const s = shippingRow.rows[0];
+            if (s.shipping_type !== "local") {
+              importShipping({
+                orderId:      id,
+                orderNumber:  id,
+                recipient: {
+                  name:      webOrder.customer_name  || "",
+                  phone:     webOrder.customer_phone || "",
+                  cellPhone: webOrder.customer_phone || "",
+                  email:     webOrder.customer_email || "",
+                },
+                shipping: {
+                  deliveryType: s.shipping_type === "home" ? "D" : "S",
+                  productType:  s.service_code  || "CP",
+                  agency:       s.branch_id     || null,
+                  streetName:   s.street        || "",
+                  streetNumber: s.street_number || "",
+                  floor:        "",
+                  apartment:    s.floor_apt     || "",
+                  city:         s.city          || "",
+                  provinceCode: s.province      || "",
+                  postalCode:   s.postal_code   || "",
+                },
+                declaredValue: webOrder.total || 0,
+              })
+                .then(async (data) => {
+                  const trackingCode = data.trackingNumber || data.codigo || data.id || null;
+                  if (trackingCode) {
+                    await pool.query(
+                      "UPDATE order_shipping SET tracking_code = $1 WHERE web_order_id = $2",
+                      [trackingCode, id]
+                    );
+                  }
+                })
+                .catch((err) => {
+                  console.error("Error importando envío a Correo Argentino:", err.message);
+                });
+            }
+          }
         } catch (err) {
           console.error("Error creando Nota de Pedido desde pedido web:", err);
         }
@@ -114,6 +160,32 @@ export default class WebOrderService {
       }, client);
 
       await this.repo.replaceItems(order.id, data.items || [], client);
+
+      // Guardar datos de envío si corresponde
+      if (data.shipping && data.shipping.type !== "local") {
+        const s = data.shipping;
+        await client.query(
+          `INSERT INTO order_shipping
+            (web_order_id, shipping_type, postal_code, province, street, street_number,
+             floor_apt, city, branch_id, branch_name, service_code, service_name, shipping_amount)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [
+            order.id,
+            s.type,
+            s.postal_code   ?? null,
+            s.province      ?? null,
+            s.street        ?? null,
+            s.street_number ?? null,
+            s.floor_apt     ?? null,
+            s.city          ?? null,
+            s.branch_id     ?? null,
+            s.branch_name   ?? null,
+            s.service_code  ?? null,
+            s.service_name  ?? null,
+            s.shipping_amount ?? null,
+          ]
+        );
+      }
 
       await client.query("COMMIT");
 

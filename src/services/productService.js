@@ -79,7 +79,7 @@ export default class ProductService {
   async search(name, negocioId, useVector = false) {
     let queryEmbedding = null;
     if (useVector && name?.trim()) {
-      try { queryEmbedding = await generateEmbedding(name.trim()); } catch {}
+      try { queryEmbedding = await generateEmbedding(name.trim().toLowerCase()); } catch {}
     }
     const [products, config] = await Promise.all([
       this.repo.search(name, negocioId, queryEmbedding),
