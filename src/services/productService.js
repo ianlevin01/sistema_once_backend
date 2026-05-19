@@ -77,15 +77,42 @@ export default class ProductService {
   }
 
   async search(name, negocioId, useVector = false) {
-    let queryEmbedding = null;
-    if (useVector && name?.trim()) {
-      try { queryEmbedding = await generateEmbedding(name.trim().toLowerCase()); } catch {}
+    const trimmed = name?.trim() ?? "";
+
+    if (!trimmed) {
+      const [products, config] = await Promise.all([
+        this.repo.searchRecent(negocioId),
+        getPriceConfig(negocioId),
+      ]);
+      return this._processProducts(products, config);
     }
-    const [products, config] = await Promise.all([
-      this.repo.search(name, negocioId, queryEmbedding),
+
+    // Lanzar búsqueda por texto + generación de embedding en paralelo
+    const [textResults, config, embedding] = await Promise.all([
+      this.repo.searchByText(trimmed, negocioId),
       getPriceConfig(negocioId),
+      useVector
+        ? generateEmbedding(trimmed.toLowerCase()).catch(() => null)
+        : Promise.resolve(null),
     ]);
 
+    // Búsqueda semántica con el embedding ya listo
+    let semanticResults = [];
+    if (embedding) {
+      semanticResults = await this.repo.searchByEmbedding(negocioId, embedding);
+    }
+
+    // Combinar: texto primero, luego semánticos que no estén ya en texto
+    const textIds = new Set(textResults.map((r) => r.id));
+    const combined = [
+      ...textResults,
+      ...semanticResults.filter((r) => !textIds.has(r.id)),
+    ];
+
+    return this._processProducts(combined, config);
+  }
+
+  _processProducts(products, config) {
     return Promise.all(
       products.map(async (product) => {
         const costo_usd = product.costo_usd ? Number(product.costo_usd) : null;

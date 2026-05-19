@@ -1,8 +1,8 @@
 import pool from "../database/db.js"
 
 export default class ProductRepository {
-  async search(name, negocioId, queryEmbedding = null) {
-    const SELECT = `
+  _select() {
+    return `
       SELECT
         p.*,
         c.name AS category_name,
@@ -23,35 +23,42 @@ export default class ProductRepository {
       LEFT JOIN categories c ON c.id = p.category_id
       LEFT JOIN product_price_overrides ppo ON ppo.product_id = p.id
     `;
+  }
 
-    if (queryEmbedding) {
-      const res = await pool.query(`
-        ${SELECT}
-        WHERE p.negocio_id = $1 AND p.deleted_at IS NULL AND p.active = true
-          AND p.embedding IS NOT NULL
-          AND (p.embedding <=> $2) < 0.65
-        ORDER BY p.embedding <=> $2
-        LIMIT 30
-      `, [negocioId, JSON.stringify(queryEmbedding)]);
-      return res.rows;
-    }
-
-    if (!name?.trim()) {
-      const res = await pool.query(`
-        ${SELECT}
-        WHERE p.negocio_id = $1 AND p.deleted_at IS NULL AND p.active = true
-        ORDER BY p.created_at DESC
-        LIMIT 20
-      `, [negocioId]);
-      return res.rows;
-    }
-
+  async searchRecent(negocioId) {
     const res = await pool.query(`
-      ${SELECT}
-      WHERE (p.name ILIKE $1 OR p.code ILIKE $1) AND p.negocio_id = $2 AND p.deleted_at IS NULL
+      ${this._select()}
+      WHERE p.negocio_id = $1 AND p.deleted_at IS NULL AND p.active = true
       ORDER BY p.created_at DESC
+      LIMIT 20
+    `, [negocioId]);
+    return res.rows;
+  }
+
+  async searchByText(name, negocioId) {
+    const res = await pool.query(`
+      ${this._select()}
+      WHERE (p.name ILIKE $1 OR p.code ILIKE $1)
+        AND p.negocio_id = $2
+        AND p.deleted_at IS NULL
+        AND p.active = true
+      ORDER BY p.name ASC
       LIMIT 100
     `, [`%${name}%`, negocioId]);
+    return res.rows;
+  }
+
+  async searchByEmbedding(negocioId, embedding) {
+    const res = await pool.query(`
+      ${this._select()}
+      WHERE p.negocio_id = $1
+        AND p.deleted_at IS NULL
+        AND p.active = true
+        AND p.embedding IS NOT NULL
+        AND (p.embedding <=> $2) < 0.65
+      ORDER BY p.embedding <=> $2
+      LIMIT 30
+    `, [negocioId, JSON.stringify(embedding)]);
     return res.rows;
   }
 

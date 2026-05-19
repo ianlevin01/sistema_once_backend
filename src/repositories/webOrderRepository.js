@@ -191,7 +191,19 @@ export default class WebOrderRepository {
         `SELECT * FROM customers WHERE email = $1 LIMIT 1`,
         [email]
       );
-      if (existing.rows[0]) return existing.rows[0];
+      if (existing.rows[0]) {
+        const oldName = existing.rows[0].name ?? "";
+        const newName = name ?? "";
+        // Actualizar si el nombre nuevo contiene apellido y el viejo no
+        if (newName.trim() && newName.trim() !== oldName.trim() && newName.includes(" ")) {
+          const updated = await db.query(
+            `UPDATE customers SET name = $1 WHERE id = $2 RETURNING *`,
+            [newName.trim(), existing.rows[0].id]
+          );
+          return updated.rows[0];
+        }
+        return existing.rows[0];
+      }
     }
     const res = await db.query(
       `INSERT INTO customers (name, email, phone, localidad, type)
