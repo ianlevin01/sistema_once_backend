@@ -122,11 +122,15 @@ export default class ProductService {
     return this.repo.createCategory(name, parentId, negocioId);
   }
 
-  async getPaginated(limit = 30, offset = 0, categoryId = null, sort = "default", negocioId) {
-    const [products, config] = await Promise.all([
-      this.repo.getPaginated(limit, offset, categoryId, sort, negocioId),
-      getPriceConfig(negocioId),
-    ]);
+  async getPaginated(limit = 30, offset = 0, categoryId = null, sort = "default", negocioId, maxPrice = null) {
+    const config     = await getPriceConfig(negocioId);
+    const cotizacion = Number(config.cotizacion_dolar || 0);
+    const globalPct1 = Number(config.pct_1 || 0);
+
+    const products = await this.repo.getPaginated(
+      limit, offset, categoryId, sort, negocioId,
+      maxPrice, cotizacion, globalPct1,
+    );
 
     return Promise.all(
       products.map(async (product) => {
@@ -191,6 +195,21 @@ export default class ProductService {
       }
     }
     const product = await this.repo.create({ ...p, negocio_id: negocioId });
+
+    const { rows: warehouses } = await pool.query(
+      `SELECT id FROM warehouses WHERE negocio_id = $1`,
+      [negocioId]
+    );
+    if (warehouses.length) {
+      await Promise.all(
+        warehouses.map((w) =>
+          pool.query(
+            `INSERT INTO stock (product_id, warehouse_id, quantity) VALUES ($1, $2, 0) ON CONFLICT DO NOTHING`,
+            [product.id, w.id]
+          )
+        )
+      );
+    }
 
     if (files?.length) {
       const uploads = await Promise.all(files.map((file) => this.s3.upload(file)));
