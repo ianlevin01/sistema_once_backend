@@ -70,6 +70,13 @@ export default class RemitoService {
         if (destinoId) await this.#adjustStock(client, item.product_id, destinoId,  item.quantity);
       }
 
+      const numRes = await client.query(`SELECT nextval('remito_numero_seq') AS n`);
+      await client.query(
+        `UPDATE orders SET remito_numero = $1 WHERE id = $2`,
+        [Number(numRes.rows[0].n), order.id]
+      );
+      order.remito_numero = Number(numRes.rows[0].n);
+
       await client.query("COMMIT");
       return order;
     } catch (err) {
