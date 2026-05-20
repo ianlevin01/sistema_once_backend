@@ -41,7 +41,6 @@ export default class ProductRepository {
       WHERE (p.name ILIKE $1 OR p.code ILIKE $1)
         AND p.negocio_id = $2
         AND p.deleted_at IS NULL
-        AND p.active = true
       ORDER BY p.name ASC
       LIMIT 100
     `, [`%${name}%`, negocioId]);
