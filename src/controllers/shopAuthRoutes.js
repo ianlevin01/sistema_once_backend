@@ -192,8 +192,9 @@ router.get("/stats", requireAuth, async (req, res) => {
     const { rows } = await pool.query(
       `SELECT COUNT(*)::int AS new_users
        FROM shop_users
-       WHERE DATE(created_at AT TIME ZONE 'America/Argentina/Buenos_Aires') = $1::date`,
-      [date]
+       WHERE DATE(created_at AT TIME ZONE 'America/Argentina/Buenos_Aires') = $1::date
+         AND negocio_id = $2`,
+      [date, req.user.negocio_id]
     );
     return res.json({ new_users: rows[0].new_users });
   } catch (err) {

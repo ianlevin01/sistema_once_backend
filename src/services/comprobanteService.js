@@ -89,17 +89,19 @@ export default class ComprobanteService {
       const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
 
       const preciosEnUSD = divisa === "USD";
-      const totalARS = preciosEnUSD
+      const totalARSBruto = preciosEnUSD
         ? Math.round(totalRaw * cotizacion * 100) / 100
         : totalRaw;
       const itemsParaGuardar = preciosEnUSD
         ? data.items.map((i) => ({ ...i, unit_price: Math.round(i.unit_price * cotizacion * 100) / 100 }))
         : data.items;
 
+      const descuentoPct    = Number(data.descuento_pct ?? 0) || 0;
+      const descuentoFactor = 1 - descuentoPct / 100;
+      const totalARS = Math.round(totalARSBruto * descuentoFactor * 100) / 100;
       const total = divisa === "USD"
         ? Math.round((totalARS / cotizacion) * 100) / 100
         : totalARS;
-
       // ── Crear orden ─────────────────────────────────────────
       // Para repos/devolProv: destino guarda el stockWarehouseId (UUID) para
       // que edit/delete sepan dónde revertir el stock sin tocar warehouse_id.
@@ -108,8 +110,8 @@ export default class ComprobanteService {
           customer_id, supplier_id, user_id, warehouse_id,
           total, profit, status, tipo, vendedor, price_type, texto_libre,
           es_consumidor_final, consumidor_final_nombre, divisa, destino, negocio_id,
-          created_by_user_id, created_by_name
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+          created_by_user_id, created_by_name, descuento_pct
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
         RETURNING *
       `, [
         data.customer_id  || null,
@@ -128,6 +130,7 @@ export default class ComprobanteService {
         data.negocio_id  || null,
         data.created_by_user_id || null,
         data.created_by_name    || null,
+        descuentoPct,
       ]);
       const orderRow = order.rows[0];
 
@@ -475,8 +478,10 @@ export default class ComprobanteService {
 
       // ── Recalcular total y ajustar CC ────────────────────────
       // newItems ya están en ARS (se convirtió arriba si cotizUSD != null)
-      const newTotalARS = Math.round(newItems.reduce((acc, i) => acc + Number(i.unit_price) * Number(i.quantity), 0) * 100) / 100;
-      const newTotal    = cotizUSD
+      const rawNewTotalARS  = Math.round(newItems.reduce((acc, i) => acc + Number(i.unit_price) * Number(i.quantity), 0) * 100) / 100;
+      const descuentoPctUpd = data.descuento_pct !== undefined ? Number(data.descuento_pct ?? 0) : Number(order.descuento_pct ?? 0);
+      const newTotalARS     = Math.round(rawNewTotalARS * (1 - descuentoPctUpd / 100) * 100) / 100;
+      const newTotal        = cotizUSD
         ? Math.round((newTotalARS / cotizUSD) * 100) / 100  // guardar en USD
         : newTotalARS;
       const oldTotalStored = Number(order.total);
@@ -727,6 +732,7 @@ export default class ComprobanteService {
       if (data.divisa                !== undefined) updates.divisa                = data.divisa;
       if (data.edited_by_user_id     !== undefined) updates.edited_by_user_id     = data.edited_by_user_id || null;
       if (data.edited_by_name        !== undefined) updates.edited_by_name        = data.edited_by_name    || null;
+      if (data.descuento_pct         !== undefined) updates.descuento_pct         = descuentoPctUpd;
 
       const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);
       await client.query(

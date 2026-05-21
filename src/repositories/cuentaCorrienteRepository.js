@@ -271,7 +271,7 @@ export default class CuentaCorrienteRepository {
         `INSERT INTO cc_movimientos
            (cuenta_corriente_id, tipo, concepto, monto, metodo_pago,
             divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, warehouse_id, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE(($11::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires', NOW()))`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE(($11::date)::timestamp + interval '3 hours', NOW()))`,
         [
           cuenta.id,
           tipoCC,

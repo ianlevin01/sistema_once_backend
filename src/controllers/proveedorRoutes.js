@@ -180,7 +180,7 @@ router.put("/movimientos/:movId", requireAuth, async (req, res) => {
     if (monto       !== undefined) updates.monto       = montoNuevo;
     if (concepto    !== undefined) updates.concepto    = concepto;
     if (metodo_pago !== undefined) updates.metodo_pago = metodo_pago;
-    if (fecha       !== undefined && fecha !== null) updates.created_at = fecha;
+    if (fecha       !== undefined && fecha !== null) updates.created_at = `${fecha} 03:00:00`;
 
     if (Object.keys(updates).length > 0) {
       const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);

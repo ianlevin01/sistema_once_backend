@@ -72,14 +72,14 @@ router.get("/:id", requireAuth, async (req, res) => {
 // Crear
 router.post("/", requireAuth, async (req, res) => {
   const { customer_id, customer_name, transporte_id, envia, bultos, valor } = req.body;
-  if (!transporte_id || !envia || !bultos) {
-    return res.status(400).json({ message: "transporte_id, envia y bultos son obligatorios" });
+  if (!envia || !bultos) {
+    return res.status(400).json({ message: "envia y bultos son obligatorios" });
   }
   try {
     const result = await pool.query(
       `INSERT INTO transport_remitos (customer_id, customer_name, transporte_id, envia, bultos, valor, negocio_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [customer_id || null, customer_name || null, transporte_id, envia, bultos, valor || null, req.user.negocio_id]
+      [customer_id || null, customer_name || null, transporte_id || null, envia, bultos, valor || null, req.user.negocio_id]
     );
     return res.status(201).json(result.rows[0]);
   } catch (err) {
