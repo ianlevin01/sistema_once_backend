@@ -30,7 +30,7 @@ export default class ProductRepository {
       ${this._select()}
       WHERE p.negocio_id = $1 AND p.deleted_at IS NULL AND p.active = true
       ORDER BY p.created_at DESC
-      LIMIT 20
+      LIMIT 50
     `, [negocioId]);
     return res.rows;
   }
