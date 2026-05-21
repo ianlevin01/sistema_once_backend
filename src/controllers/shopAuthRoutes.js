@@ -182,6 +182,26 @@ router.delete("/favorites/:productId", requireAuth, async (req, res) => {
   }
 });
 
+// ── GET /api/shop/stats ───────────────────────────────────────────────────────
+// Solo staff (JWT con negocio_id). Retorna nuevos shop_users registrados en la fecha dada.
+router.get("/stats", requireAuth, async (req, res) => {
+  if (!req.user.negocio_id) return res.status(403).json({ message: "Acceso solo para staff" });
+  const { date } = req.query;
+  if (!date) return res.status(400).json({ message: "Se requiere ?date=YYYY-MM-DD" });
+  try {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS new_users
+       FROM shop_users
+       WHERE DATE(created_at AT TIME ZONE 'America/Argentina/Buenos_Aires') = $1::date`,
+      [date]
+    );
+    return res.json({ new_users: rows[0].new_users });
+  } catch (err) {
+    console.error("shop stats error:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
 // ── GET /api/shop/orders ──────────────────────────────────────────────────────
 router.get("/orders", requireAuth, async (req, res) => {
   try {
