@@ -154,3 +154,14 @@ export async function sendOrderCompletedEmail({ to, customerName, orderId, items
     console.error('emailService completed:', err.message);
   }
 }
+
+export async function sendCampaignEmail({ to, subject, html }) {
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return;
+  if (!to?.trim() || !html) return;
+  try {
+    await getTransporter().sendMail({ from: getFrom(), to, subject, html });
+  } catch (err) {
+    console.error('emailService campaign:', err.message);
+    throw err;
+  }
+}

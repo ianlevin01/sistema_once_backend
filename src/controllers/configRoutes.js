@@ -22,6 +22,22 @@ router.get("/precios", requireAuth, async (req, res) => {
   }
 });
 
+// PATCH /config/preferred-warehouse
+router.patch("/preferred-warehouse", requireAuth, async (req, res) => {
+  const { preferred_warehouse_id } = req.body;
+  const negocioId = req.user.negocio_id;
+  try {
+    await pool.query(
+      `UPDATE price_config SET preferred_warehouse_id = $1 WHERE negocio_id = $2`,
+      [preferred_warehouse_id || null, negocioId]
+    );
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error("Error PATCH /config/preferred-warehouse:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
 // PUT /config/precios
 router.put("/precios", requireAuth, async (req, res) => {
   const { cotizacion_dolar, pct_1, pct_2, pct_3, pct_4, pct_5 } = req.body;

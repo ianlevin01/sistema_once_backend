@@ -332,24 +332,30 @@ export default class ProductService {
       'CODIGO', 'DETALLE', 'QxB', 'Costo',
       'Precio #1', 'Precio #2', 'Precio #3', 'Precio #4', 'Precio #5',
       ...warehouseNames,
-      'Rubro', 'Pto Pedido', 'Barcode', 'Boxcode',
+      'Rubro', 'Activo', 'Barcode', 'Boxcode',
     ];
 
     const rows = products.map((p) => {
-      const overrides  = extractOverrides(p);
-      const prices     = buildComputedPrices(Number(p.costo_usd), config, overrides);
-      const stockByName = p.stock_by_name || {};
+      const overrides   = extractOverrides(p);
+      const prices      = buildComputedPrices(Number(p.costo_usd), config, overrides);
+      // Siempre 5 columnas de precio — si costo es null/0 buildComputedPrices devuelve []
+      // y el spread vacío desplaza todas las columnas siguientes.
+      const priceRow    = [0,1,2,3,4].map((i) => prices[i] != null ? Math.round(prices[i].price * 100) / 100 : '');
+      const rawStock    = p.stock_by_name;
+      const stockByName = typeof rawStock === 'string'
+        ? (() => { try { return JSON.parse(rawStock); } catch { return {}; } })()
+        : (rawStock || {});
       return [
-        p.code,
-        p.name,
-        p.qxb     != null ? Number(p.qxb)      : '',
-        p.costo_usd != null ? Number(p.costo_usd) : '',
-        ...prices.map((pr) => Math.round(pr.price * 100) / 100),
+        p.code  ?? '',
+        p.name  ?? '',
+        p.qxb        != null ? Number(p.qxb)        : '',
+        p.costo_usd  != null ? Number(p.costo_usd)  : '',
+        ...priceRow,
         ...warehouseNames.map((wn) => stockByName[wn] ?? 0),
         p.category_name  ?? '',
-        p.punto_pedido   != null ? Number(p.punto_pedido) : 0,
-        p.barcode        ?? '',
-        p.box_code       ?? '',
+        p.active !== false ? 'true' : 'false',
+        p.barcode   ?? '',
+        p.box_code  ?? '',
       ];
     });
 
@@ -383,7 +389,7 @@ export default class ProductService {
     const idxCosto      = colIdx('Costo');
     const idxPrecio     = [1,2,3,4,5].map((n) => colIdx(`Precio #${n}`));
     const idxRubro      = colIdx('Rubro');
-    const idxPtoPedido  = colIdx('Pto Pedido');
+    const idxActivo     = colIdx('Activo');
     const idxBarcode    = colIdx('Barcode');
     const idxBoxcode    = colIdx('Boxcode');
 
@@ -393,7 +399,7 @@ export default class ProductService {
       const knownSpecial = new Set([
         'CODIGO','DETALLE','QxB','Costo',
         'Precio #1','Precio #2','Precio #3','Precio #4','Precio #5',
-        'Rubro','Pto Pedido','Barcode','Boxcode',
+        'Rubro','Activo','Pto Pedido','Barcode','Boxcode',
         'Tipo Dolar','Pasivo = 1','Incluir en','Stock FULL',
       ]);
       headers.forEach((h, i) => {
@@ -454,8 +460,7 @@ export default class ProductService {
       const xlsxName       = String(row[idxDetalle] ?? '').trim();
       const xlsxQxB        = parseNum(row[idxQxB]);
       const xlsxCosto      = parseNum(row[idxCosto]);
-      const xlsxPtoPedido  = parseNum(row[idxPtoPedido]);
-      const xlsxActive     = xlsxPtoPedido != null && xlsxPtoPedido > 0;
+      const xlsxActive     = idxActivo >= 0 && row[idxActivo] !== '' ? String(row[idxActivo]).toLowerCase() === 'true' : null;
       const xlsxRubro      = String(row[idxRubro] ?? '').trim();
       const xlsxBarcode    = String(row[idxBarcode] ?? '').trim();
       const xlsxBoxcode    = String(row[idxBoxcode] ?? '').trim();
@@ -501,14 +506,14 @@ export default class ProductService {
 
       // Campos simples
       const strComp = (a, b) => (a || '') === (b || '');
-      if (xlsxName && xlsxName !== (existing.name || ''))
+      if (xlsxName && xlsxName !== (existing.name || '').trim())
         changes.push({ field: 'name', from: existing.name, to: xlsxName });
       if (xlsxCosto != null && Math.abs(xlsxCosto - Number(existing.costo_usd || 0)) > 0.0001)
         changes.push({ field: 'costo_usd', from: Number(existing.costo_usd), to: xlsxCosto });
       if (xlsxQxB != null && xlsxQxB !== (existing.qxb != null ? Number(existing.qxb) : null))
         changes.push({ field: 'qxb', from: existing.qxb != null ? Number(existing.qxb) : null, to: xlsxQxB });
-      if (xlsxPtoPedido != null && xlsxPtoPedido !== (existing.punto_pedido != null ? Number(existing.punto_pedido) : null))
-        changes.push({ field: 'punto_pedido', from: existing.punto_pedido != null ? Number(existing.punto_pedido) : null, to: xlsxPtoPedido });
+      if (xlsxActive != null && xlsxActive !== Boolean(existing.active))
+        changes.push({ field: 'active', from: Boolean(existing.active), to: xlsxActive });
       if (idxBarcode >= 0 && !strComp(xlsxBarcode, existing.barcode))
         changes.push({ field: 'barcode', from: existing.barcode, to: xlsxBarcode });
       if (idxBoxcode >= 0 && !strComp(xlsxBoxcode, existing.box_code))
@@ -543,7 +548,10 @@ export default class ProductService {
 
       // Stock
       if (includeStock) {
-        const stockByName = existing.stock_by_name || {};
+        const rawStock = existing.stock_by_name;
+        const stockByName = typeof rawStock === 'string'
+          ? (() => { try { return JSON.parse(rawStock); } catch { return {}; } })()
+          : (rawStock || {});
         for (const [wName, ci] of Object.entries(stockColMap)) {
           const xlsxQty = parseNum(row[ci]) ?? 0;
           const curQty  = Number(stockByName[wName] ?? 0);
@@ -585,11 +593,10 @@ export default class ProductService {
           const xlsxName      = String(row[idxDetalle] ?? '').trim();
           const xlsxCosto     = parseNum(row[idxCosto]);
           const xlsxQxB       = parseNum(row[idxQxB]);
-          const xlsxPtoPedido = parseNum(row[idxPtoPedido]);
           const xlsxRubro     = String(row[idxRubro] ?? '').trim();
           const xlsxBarcode   = String(row[idxBarcode] ?? '').trim();
           const xlsxBoxcode   = String(row[idxBoxcode] ?? '').trim();
-          const xlsxActive    = xlsxPtoPedido != null ? xlsxPtoPedido > 0 : null;
+          const xlsxActive    = idxActivo >= 0 && row[idxActivo] !== '' ? String(row[idxActivo]).toLowerCase() === 'true' : null;
           const xlsxPrices    = idxPrecio.map((ci) => parseNum(row[ci]));
           const catId         = xlsxRubro ? (catMap.get(xlsxRubro.toLowerCase()) ?? null) : undefined;
           const effectiveCosto = xlsxCosto ?? (item.id ? Number(prodMap.get(item.code)?.costo_usd) : null);
@@ -614,7 +621,7 @@ export default class ProductService {
               RETURNING id
             `, [
               item.code, xlsxName, xlsxQxB, xlsxCosto,
-              xlsxPtoPedido, xlsxActive ?? true,
+              null, xlsxActive ?? true,
               xlsxBarcode || null, xlsxBoxcode || null, newCatId, negocioId,
             ]);
             const newId = ins.rows[0].id;
@@ -703,11 +710,11 @@ export default class ProductService {
                 category_id = COALESCE($8, category_id)
               WHERE id = $9
             `, [
-              xlsxName      || null,
-              xlsxCosto     ?? null,
-              xlsxQxB       ?? null,
-              xlsxPtoPedido ?? null,
-              xlsxActive    ?? null,
+              xlsxName   || null,
+              xlsxCosto  ?? null,
+              xlsxQxB    ?? null,
+              null,
+              xlsxActive ?? null,
               xlsxBarcode,
               xlsxBoxcode,
               resolvedCatId,

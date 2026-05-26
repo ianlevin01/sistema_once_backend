@@ -1,6 +1,6 @@
+import "./env.js";
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import customers from "./controllers/customersRoutes.js";
 import products from "./controllers/productsRoutes.js";
 import remitos from "./controllers/remitosRoutes.js";
@@ -20,9 +20,8 @@ import transportesRoutes     from "./controllers/transportesRoutes.js";
 import transportRemitosRoutes from "./controllers/transportRemitosRoutes.js";
 import stockRoutes             from "./controllers/stockRoutes.js";
 import correoRoutes            from "./controllers/correoRoutes.js";
+import emailCampaignRoutes     from "./controllers/emailCampaignRoutes.js";
 
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -62,6 +61,7 @@ app.use("/api/transportes",        transportesRoutes);
 app.use("/api/transport-remitos",  transportRemitosRoutes);
 app.use("/api/stock",              stockRoutes);
 app.use("/api/correo",             correoRoutes);
+app.use("/api/email-campaign",     emailCampaignRoutes);
 
 // Server
 app.listen(PORT, "0.0.0.0", () => {
