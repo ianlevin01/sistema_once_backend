@@ -41,7 +41,7 @@ export default class ProductRepository {
       WHERE (p.name ILIKE $1 OR p.code ILIKE $1)
         AND p.negocio_id = $2
         AND p.deleted_at IS NULL
-      ORDER BY p.name ASC
+      ORDER BY p.created_at DESC
       LIMIT 100
     `, [`%${name}%`, negocioId]);
     return res.rows;
@@ -55,7 +55,7 @@ export default class ProductRepository {
         AND p.active = true
         AND p.embedding IS NOT NULL
         AND (p.embedding <=> $2) < 0.65
-      ORDER BY p.embedding <=> $2
+      ORDER BY p.created_at DESC
       LIMIT 30
     `, [negocioId, JSON.stringify(embedding)]);
     return res.rows;
