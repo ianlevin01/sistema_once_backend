@@ -40,7 +40,10 @@ router.patch("/preferred-warehouse", requireAuth, async (req, res) => {
 
 // PUT /config/precios
 router.put("/precios", requireAuth, async (req, res) => {
-  const { cotizacion_dolar, pct_1, pct_2, pct_3, pct_4, pct_5 } = req.body;
+  const {
+    cotizacion_dolar, pct_1, pct_2, pct_3, pct_4, pct_5,
+    round_precio_1, round_precio_2, round_precio_3, round_precio_4, round_precio_5,
+  } = req.body;
 
   if (
     cotizacion_dolar == null || pct_1 == null || pct_2 == null ||
@@ -50,6 +53,8 @@ router.put("/precios", requireAuth, async (req, res) => {
   }
 
   const negocioId = req.user.negocio_id;
+  const rounds    = [round_precio_1, round_precio_2, round_precio_3, round_precio_4, round_precio_5]
+    .map((v) => (v && Number(v) > 0 ? Number(v) : null));
 
   try {
     const existing = await pool.query(
@@ -61,17 +66,21 @@ router.put("/precios", requireAuth, async (req, res) => {
     if (existing.rows.length) {
       const { rows } = await pool.query(
         `UPDATE price_config
-         SET cotizacion_dolar=$1, pct_1=$2, pct_2=$3, pct_3=$4, pct_4=$5, pct_5=$6, updated_at=now()
-         WHERE id=$7
+         SET cotizacion_dolar=$1, pct_1=$2, pct_2=$3, pct_3=$4, pct_4=$5, pct_5=$6,
+             round_precio_1=$7, round_precio_2=$8, round_precio_3=$9, round_precio_4=$10, round_precio_5=$11,
+             updated_at=now()
+         WHERE id=$12
          RETURNING *`,
-        [cotizacion_dolar, pct_1, pct_2, pct_3, pct_4, pct_5, existing.rows[0].id]
+        [cotizacion_dolar, pct_1, pct_2, pct_3, pct_4, pct_5, ...rounds, existing.rows[0].id]
       );
       result = rows[0];
     } else {
       const { rows } = await pool.query(
-        `INSERT INTO price_config (cotizacion_dolar, pct_1, pct_2, pct_3, pct_4, pct_5, negocio_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-        [cotizacion_dolar, pct_1, pct_2, pct_3, pct_4, pct_5, negocioId]
+        `INSERT INTO price_config
+           (cotizacion_dolar, pct_1, pct_2, pct_3, pct_4, pct_5,
+            round_precio_1, round_precio_2, round_precio_3, round_precio_4, round_precio_5, negocio_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        [cotizacion_dolar, pct_1, pct_2, pct_3, pct_4, pct_5, ...rounds, negocioId]
       );
       result = rows[0];
     }

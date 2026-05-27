@@ -27,6 +27,7 @@ export function invalidatePriceConfigCache(negocioId) {
 
 // Construye el array de precios calculados desde costo_usd.
 // overrides: objeto con pct_1..pct_5 opcionales (null = usar global)
+// config puede incluir round_precio_N (1, 10, 100, 1000) para redondeo hacia arriba.
 function buildComputedPrices(costo_usd, config, overrides = null) {
   if (!costo_usd || !config) return [];
   const cotizacion = Number(config.cotizacion_dolar || 0);
@@ -38,13 +39,22 @@ function buildComputedPrices(costo_usd, config, overrides = null) {
     const pct    = (ovrPct !== null && ovrPct !== undefined)
       ? Number(ovrPct)
       : Number(config[`pct_${n}`] || 0);
-    const factor = 1 + pct / 100;
+    const factor    = 1 + pct / 100;
+    let   price     = costoArs * factor;
+    const price_usd = costoUsd * factor;
+
+    // Redondeo hacia arriba según configuración por nivel de precio
+    const roundUnit = Number(config[`round_precio_${n}`] || 0);
+    if (roundUnit > 0) {
+      price = Math.ceil(price / roundUnit) * roundUnit;
+    }
+
     return {
       price_type: `precio_${n}`,
-      price:      costoArs * factor,
-      price_usd:  costoUsd * factor,
+      price,
+      price_usd,
       pct,
-      currency:   "ARS",
+      currency: "ARS",
     };
   });
 }
