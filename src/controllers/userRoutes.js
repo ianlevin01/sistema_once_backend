@@ -31,6 +31,8 @@ router.post("/", requireAuth, async (req, res) => {
   if (!email?.trim())    return res.status(400).json({ message: "Email requerido" });
   if (!password?.trim()) return res.status(400).json({ message: "Contraseña requerida" });
   if (!role?.trim())     return res.status(400).json({ message: "Rol requerido" });
+  if (role === "superadmin" && req.user.role !== "superadmin")
+    return res.status(403).json({ message: "Solo un superadmin puede asignar el rol superadmin" });
 
   try {
     const hash = await bcrypt.hash(password, 10);
@@ -55,6 +57,9 @@ router.post("/", requireAuth, async (req, res) => {
 // ── Actualizar usuario ────────────────────────────────────────
 router.put("/:id", requireAuth, async (req, res) => {
   const { name, email, password, role, warehouse_id, active } = req.body;
+  if (role === "superadmin" && req.user.role !== "superadmin")
+    return res.status(403).json({ message: "Solo un superadmin puede asignar el rol superadmin" });
+
   try {
     const params = [];
     let i = 1;

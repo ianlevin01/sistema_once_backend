@@ -289,9 +289,10 @@ export default class ProveedorRepository {
         `INSERT INTO cc_movimientos_prov
            (cuenta_corriente_id, tipo, concepto, monto, metodo_pago,
             divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, created_at)
-         VALUES ($1,'debito',$2,$3,$4,$5,$6,$7,$8, COALESCE(($9::date)::timestamp + interval '3 hours', NOW()))`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, COALESCE(($10::date)::timestamp + interval '3 hours', NOW()))`,
         [
           cc.id,
+          esDebe ? "debito" : "pago",
           concepto || (esDebe ? "Pago / crédito proveedor" : "Cargo / deuda adicional"),
           montoEnCuenta,
           metodo_pago || null,

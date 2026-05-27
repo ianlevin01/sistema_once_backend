@@ -64,7 +64,7 @@ El ejemplo existe solo para que no generes emails planos o básicos cuando el us
             <span style="display:inline-block;background:#eff6ff;color:#1d4ed8;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:12px;">Juguetes</span>
             <h3 style="margin:0 0 10px;font-size:22px;font-weight:900;color:#0f172a;letter-spacing:-.5px;line-height:1.2;">NOMBRE DEL PRODUCTO</h3>
             <p style="margin:0 0 20px;font-size:14px;color:#64748b;line-height:1.7;">Descripción llamativa del producto. Destacá las ventajas para el comprador mayorista con un tono dinámico.</p>
-            <a href="https://oncepuntos.duckdns.org" style="display:inline-block;background:linear-gradient(135deg,#1d4ed8,#0ea5e9);color:#fff;font-size:13px;font-weight:700;text-decoration:none;padding:11px 24px;border-radius:8px;">Ver producto →</a>
+            <a href="https://oncepuntos.com.ar" style="display:inline-block;background:linear-gradient(135deg,#1d4ed8,#0ea5e9);color:#fff;font-size:13px;font-weight:700;text-decoration:none;padding:11px 24px;border-radius:8px;">Ver producto →</a>
           </td>
           <td width="45%" style="padding:28px 40px 28px 0;vertical-align:middle;text-align:center;background:#f8fafc;">
             <img src="URL_IMAGEN" alt="Producto" width="180" style="width:180px;height:180px;object-fit:contain;display:block;margin:0 auto;border-radius:12px;" />
@@ -101,7 +101,7 @@ El ejemplo existe solo para que no generes emails planos o básicos cuando el us
     <tr><td style="background:linear-gradient(135deg,#1d4ed8 0%,#0ea5e9 100%);padding:40px;text-align:center;">
       <h3 style="margin:0 0 10px;font-size:22px;font-weight:900;color:#fff;letter-spacing:-.5px;">¿Listo para hacer tu pedido?</h3>
       <p style="margin:0 0 24px;font-size:15px;color:rgba(255,255,255,.8);line-height:1.6;">Visitá el catálogo completo y hacé tu pedido mayorista hoy.</p>
-      <a href="https://oncepuntos.duckdns.org" style="display:inline-block;background:#fff;color:#1d4ed8;font-size:14px;font-weight:800;text-decoration:none;padding:14px 32px;border-radius:10px;letter-spacing:.01em;">Ver catálogo completo →</a>
+      <a href="https://oncepuntos.com.ar" style="display:inline-block;background:#fff;color:#1d4ed8;font-size:14px;font-weight:800;text-decoration:none;padding:14px 32px;border-radius:10px;letter-spacing:.01em;">Ver catálogo completo →</a>
     </td></tr>
 
     <!-- FOOTER -->
@@ -243,7 +243,7 @@ router.get("/recipients", requireAuth, async (req, res) => {
     const { rows } = await pool.query(
       `SELECT COUNT(*)::int AS total FROM public.shop_users
        WHERE negocio_id = $1 AND email IS NOT NULL`,
-      [ONCEPUNTOS_ID]
+      [req.user.negocio_id]
     );
     return res.json({ total: rows[0].total });
   } catch (err) {
@@ -341,7 +341,7 @@ router.post("/send", requireAuth, async (req, res) => {
     const { rows } = await pool.query(
       `SELECT email FROM public.shop_users
        WHERE negocio_id = $1 AND email IS NOT NULL AND trim(email) != ''`,
-      [ONCEPUNTOS_ID]
+      [req.user.negocio_id]
     );
 
     let sent = 0, errors = 0;

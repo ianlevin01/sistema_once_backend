@@ -21,6 +21,7 @@ import transportRemitosRoutes from "./controllers/transportRemitosRoutes.js";
 import stockRoutes             from "./controllers/stockRoutes.js";
 import correoRoutes            from "./controllers/correoRoutes.js";
 import emailCampaignRoutes     from "./controllers/emailCampaignRoutes.js";
+import rentabilidadRoutes      from "./controllers/rentabilidadRoutes.js";
 
 
 const app = express();
@@ -62,6 +63,7 @@ app.use("/api/transport-remitos",  transportRemitosRoutes);
 app.use("/api/stock",              stockRoutes);
 app.use("/api/correo",             correoRoutes);
 app.use("/api/email-campaign",     emailCampaignRoutes);
+app.use("/api/rentabilidad",       rentabilidadRoutes);
 
 // Server
 app.listen(PORT, "0.0.0.0", () => {
