@@ -213,6 +213,10 @@ export default class ProveedorRepository {
       const divisa      = cc.divisa ?? "ARS";
       const divisaCobro = divisa_cobro ?? divisa;
 
+      if (divisaCobro !== divisa && cotizacion_manual == null) {
+        throw new Error(`Conversión ${divisaCobro}→${divisa} requiere cotizacion_manual explícita`);
+      }
+
       const montoEnCuenta = convertir(monto, divisaCobro, divisa, cotizacion);
 
       if (cc.saldo < montoEnCuenta) {
@@ -273,6 +277,10 @@ export default class ProveedorRepository {
       const cc          = await this.getOrCreateCC(proveedorId, client);
       const divisa      = cc.divisa ?? "ARS";
       const divisaCobro = divisa_cobro ?? divisa;
+
+      if (divisaCobro !== divisa && cotizacion_manual == null) {
+        throw new Error(`Conversión ${divisaCobro}→${divisa} requiere cotizacion_manual explícita`);
+      }
 
       const montoEnCuenta = convertir(monto, divisaCobro, divisa, cotizacion);
       const esDebe = tipo_mov !== "haber";
