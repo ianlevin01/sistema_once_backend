@@ -22,6 +22,7 @@ import stockRoutes             from "./controllers/stockRoutes.js";
 import correoRoutes            from "./controllers/correoRoutes.js";
 import emailCampaignRoutes     from "./controllers/emailCampaignRoutes.js";
 import rentabilidadRoutes      from "./controllers/rentabilidadRoutes.js";
+import printRoutes             from "./controllers/printRoutes.js";
 
 
 const app = express();
@@ -34,7 +35,7 @@ app.use((req, res, next) => {
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
   next();
 });
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 app.use(cors());
 
 // Health check
@@ -64,6 +65,7 @@ app.use("/api/stock",              stockRoutes);
 app.use("/api/correo",             correoRoutes);
 app.use("/api/email-campaign",     emailCampaignRoutes);
 app.use("/api/rentabilidad",       rentabilidadRoutes);
+app.use("/api/print",              printRoutes);
 
 // Server
 app.listen(PORT, "0.0.0.0", () => {
