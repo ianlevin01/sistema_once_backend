@@ -20,7 +20,7 @@ function buildResponse(user) {
     pct_vendedor:   user.pct_vendedor ?? 0,
     negocio_id:     user.negocio_id,
   };
-  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1h" });
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "12h" });
   return { token, user: payload };
 }
 
