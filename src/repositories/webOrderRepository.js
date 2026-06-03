@@ -85,7 +85,8 @@ export default class WebOrderRepository {
     }
     if (search) {
       params.push(`%${search}%`);
-      query += ` AND (c.name ILIKE $${params.length} OR c.email ILIKE $${params.length})`;
+      params.push(`%${search}%`);
+      query += ` AND (c.name ILIKE $${params.length - 1} OR c.email ILIKE $${params.length})`;
     }
 
     query += ` ORDER BY w.created_at DESC`;
@@ -99,8 +100,15 @@ export default class WebOrderRepository {
     const db = client || pool;
     const res = await db.query(`
       INSERT INTO web_orders
-        (customer_id, customer_name, customer_email, customer_phone, observaciones, total, color, negocio_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (numero, customer_id, customer_name, customer_email, customer_phone, observaciones, total, color, negocio_id)
+      VALUES (
+        CASE
+          WHEN $8 = '00000000-0000-0000-0000-000000000001'
+          THEN nextval('public.web_orders_numero_seq_oncepuntos')
+          ELSE NULL
+        END,
+        $1, $2, $3, $4, $5, $6, $7, $8
+      )
       RETURNING *
     `, [
       data.customer_id    || null,

@@ -186,6 +186,36 @@ export default class ComprobanteService {
         );
       }
 
+      // ── CC cliente: comprobante no-CC → solo visualización ──
+      // Usa SAVEPOINT para que un fallo aquí (ej: columna afecta_saldo inexistente)
+      // no aborte la transacción principal.
+      if (!esCuentaCorriente && data.customer_id && !data.es_consumidor_final && (esPresupuesto || esDevolucion)) {
+        try {
+          await client.query("SAVEPOINT visual_entry");
+          const cc = await this.ccRepo.getOrCreate(data.customer_id, client);
+          if (cc) {
+            const divisaCC      = cc.divisa ?? "ARS";
+            const montoEnCuenta = divisaCC === "USD" ? totalARS / cotizacion : totalARS;
+            await this.ccRepo.insertSoloVisualizacion({
+              cuentaId:        cc.id,
+              tipo:            esDevolucion ? "pago" : "debito",
+              concepto:        `${tipoFinal} — ${orderRow.id.slice(0, 8)}`,
+              monto:           montoEnCuenta,
+              orderId:         orderRow.id,
+              metodo_pago:     data.payment_method,
+              divisa_cuenta:   divisaCC,
+              divisa_cobro:    "ARS",
+              monto_original:  totalARS,
+              cotizacion_usada: divisaCC === "USD" ? cotizacion : null,
+            }, client);
+          }
+          await client.query("RELEASE SAVEPOINT visual_entry");
+        } catch (err) {
+          console.warn("CC visual entry failed (non-blocking):", err.message);
+          await client.query("ROLLBACK TO SAVEPOINT visual_entry");
+        }
+      }
+
       // ── Web order ───────────────────────────────────────────
       let _completionEmail = null;
       if (data.web_order_id) {
@@ -512,34 +542,52 @@ export default class ComprobanteService {
         const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
 
         if (paymentMethodChanged && wasCtaCte && !isCtaCte) {
-          // Cambio DE Cta Cte A otro método: revertir el monto completo del cliente
+          // Cambio DE Cta Cte A otro método: eliminar entradas reales, revertir saldo, insertar visual
           if (oldCustomerId && !oldEsConsumidorFinal) {
             const cc = await this.ccRepo.getOrCreate(oldCustomerId, client);
-            const divisaCC      = cc.divisa ?? "ARS";
-            const montoEnCuenta = divisaCC === "USD" ? oldTotalARS / cotizacion : oldTotalARS;
+            const divisaCC = cc.divisa ?? "ARS";
+            // Eliminar entradas que afectan saldo y revertir su efecto
+            const existingMovs = await client.query(
+              `SELECT id, tipo, monto FROM cc_movimientos
+               WHERE cuenta_corriente_id = $1 AND order_id = $2 AND afecta_saldo = TRUE`,
+              [cc.id, id]
+            );
+            for (const mov of existingMovs.rows) {
+              const saldoDelta = mov.tipo === "debito" ? -Number(mov.monto) : Number(mov.monto);
+              if (saldoDelta !== 0) {
+                await client.query(
+                  `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+                  [saldoDelta, cc.id]
+                );
+              }
+              await client.query(`DELETE FROM cc_movimientos WHERE id = $1`, [mov.id]);
+            }
+            // Insertar entrada visual con el método nuevo y el concepto correcto
+            const montoEnCuenta = divisaCC === "USD" ? newTotalARS / cotizacion : newTotalARS;
             if (montoEnCuenta !== 0) {
-              // Revertir: presupuesto debitó → acreditar; devolucion acreditó → debitar
-              const tipoMov  = esPresupuesto ? "pago" : "debito";
-              const saldoAdj = esPresupuesto ? -montoEnCuenta : montoEnCuenta;
-              await client.query(
-                `INSERT INTO cc_movimientos
-                   (cuenta_corriente_id, tipo, concepto, monto, order_id,
-                    divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-                [cc.id, tipoMov, `Reversión método pago — ${id.slice(0,8)}`,
-                 Math.abs(montoEnCuenta), id, divisaCC, "ARS", oldTotalARS,
-                 divisaCC === "USD" ? cotizacion : null]
-              );
-              await client.query(
-                `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
-                [saldoAdj, cc.id]
-              );
+              await this.ccRepo.insertSoloVisualizacion({
+                cuentaId:         cc.id,
+                tipo:             esPresupuesto ? "debito" : "pago",
+                concepto:         `${tipo} — ${id.slice(0, 8)}`,
+                monto:            Math.abs(montoEnCuenta),
+                orderId:          id,
+                metodo_pago:      newPaymentMethod,
+                divisa_cuenta:    divisaCC,
+                divisa_cobro:     "ARS",
+                monto_original:   newTotalARS,
+                cotizacion_usada: divisaCC === "USD" ? cotizacion : null,
+              }, client);
             }
           }
         } else if (paymentMethodChanged && !wasCtaCte && isCtaCte) {
-          // Cambio A Cta Cte desde otro método: aplicar el monto completo al cliente
+          // Cambio A Cta Cte desde otro método: eliminar entrada visual previa, aplicar monto real
           if (newCustomerId && !newEsConsumidorFinal) {
             const cc = await this.ccRepo.getOrCreate(newCustomerId, client);
+            // Eliminar entrada visual previa sin tocar el saldo
+            await client.query(
+              `DELETE FROM cc_movimientos WHERE order_id = $1 AND afecta_saldo = FALSE AND cuenta_corriente_id = $2`,
+              [id, cc.id]
+            );
             const divisaCC      = cc.divisa ?? "ARS";
             const montoEnCuenta = divisaCC === "USD" ? newTotalARS / cotizacion : newTotalARS;
             if (montoEnCuenta !== 0) {
@@ -547,11 +595,12 @@ export default class ComprobanteService {
               const saldoAdj = esPresupuesto ? montoEnCuenta : -montoEnCuenta;
               await client.query(
                 `INSERT INTO cc_movimientos
-                   (cuenta_corriente_id, tipo, concepto, monto, order_id,
+                   (cuenta_corriente_id, tipo, concepto, monto, order_id, metodo_pago,
                     divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-                [cc.id, tipoMov, `Aplicación método pago — ${id.slice(0,8)}`,
-                 Math.abs(montoEnCuenta), id, divisaCC, "ARS", newTotalARS,
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+                [cc.id, tipoMov, `${tipo} — ${id.slice(0,8)}`,
+                 Math.abs(montoEnCuenta), id, "Cuenta Corriente",
+                 divisaCC, "ARS", newTotalARS,
                  divisaCC === "USD" ? cotizacion : null]
               );
               await client.query(
@@ -848,21 +897,23 @@ export default class ComprobanteService {
       //   tipo='debito' sumó saldo al crearse → al revertir restamos
       //   tipo='pago'   restó saldo al crearse → al revertir sumamos
       const movsCli = await client.query(
-        `SELECT id, cuenta_corriente_id, tipo, monto
+        `SELECT id, cuenta_corriente_id, tipo, monto, afecta_saldo
          FROM cc_movimientos
          WHERE order_id = $1
             OR concepto LIKE '% — ' || LEFT($1::text, 8)`,
         [id]
       );
       for (const mov of movsCli.rows) {
-        const saldoDelta = mov.tipo === "debito"
-          ? -Number(mov.monto)
-          :  Number(mov.monto);
-        if (saldoDelta !== 0) {
-          await client.query(
-            `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
-            [saldoDelta, mov.cuenta_corriente_id]
-          );
+        if (mov.afecta_saldo !== false) {
+          const saldoDelta = mov.tipo === "debito"
+            ? -Number(mov.monto)
+            :  Number(mov.monto);
+          if (saldoDelta !== 0) {
+            await client.query(
+              `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+              [saldoDelta, mov.cuenta_corriente_id]
+            );
+          }
         }
         await client.query(`DELETE FROM cc_movimientos WHERE id = $1`, [mov.id]);
       }
@@ -1068,7 +1119,9 @@ export default class ComprobanteService {
                wo.numero AS web_order_numero,
                w.name AS warehouse_name,
                o.created_by_name, o.edited_by_name,
-               o.deleted_at, o.deleted_by_name
+               o.deleted_at, o.deleted_by_name,
+               COALESCE(NULLIF(o.divisa, ''), 'ARS') AS divisa,
+               COALESCE(o.descuento_pct, 0) AS descuento_pct
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN payments pm ON pm.order_id = o.id

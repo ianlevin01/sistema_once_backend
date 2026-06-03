@@ -7,7 +7,7 @@ const router = Router();
 // POST /api/print/pdf
 // Body: { html: string }
 // Retorna: PDF binario (application/pdf)
-router.post("/pdf", requireAuth, async (req, res) => {
+router.post("/pdf", async (req, res) => {
   const { html } = req.body;
   if (!html || typeof html !== "string") {
     return res.status(400).json({ message: "Campo 'html' requerido" });

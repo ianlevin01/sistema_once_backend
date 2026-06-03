@@ -2,18 +2,28 @@ import { Router } from "express";
 import WebOrderService from "../services/webOrderService.js";
 import { requireAuth } from "./authRoutes.js";
 import jwt from "jsonwebtoken";
+import pool from "../database/db.js";
 
 const router = Router();
 const svc = new WebOrderService();
 const JWT_SECRET = process.env.JWT_SECRET ?? "oncepuntos_secret_dev";
 
-// Extrae customer_id directo del JWT (ya viene dentro del token desde el registro)
-function resolveCustomerFromToken(req) {
+// Extrae customer_id del JWT. Si el token es válido pero customer_id es null
+// (usuario registrado con edge case), lo busca en shop_users por id.
+async function resolveCustomerFromToken(req) {
   const header = req.headers.authorization ?? "";
   if (!header.startsWith("Bearer ")) return null;
   try {
     const payload = jwt.verify(header.slice(7), JWT_SECRET);
-    return payload.customer_id ?? null;
+    if (payload.customer_id) return payload.customer_id;
+    // customer_id null en el token → buscar en shop_users
+    if (payload.id) {
+      const res = await pool.query(
+        `SELECT customer_id FROM shop_users WHERE id = $1`, [payload.id]
+      );
+      return res.rows[0]?.customer_id ?? null;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -41,7 +51,7 @@ router.post("/", async (req, res) => {
 
   // Intentar resolver desde JWT si no vino en el body
   if (!customer_id) {
-    customer_id = resolveCustomerFromToken(req);
+    customer_id = await resolveCustomerFromToken(req);
   }
 
   if (!customer_id && !customer_name) {

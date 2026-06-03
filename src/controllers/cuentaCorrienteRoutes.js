@@ -112,7 +112,7 @@ router.put("/movimientos/:movId", requireAuth, async (req, res) => {
     const montoAnterior = Number(mov.monto);
     let montoNuevo = monto !== undefined ? Number(monto) : montoAnterior;
 
-    if (montoNuevo !== montoAnterior) {
+    if (mov.afecta_saldo !== false && montoNuevo !== montoAnterior) {
       const diff = montoNuevo - montoAnterior;
       const saldoDelta = mov.tipo === "debito" ? diff : -diff;
 
@@ -172,11 +172,13 @@ router.delete("/movimientos/:movId", requireAuth, async (req, res) => {
       return res.status(404).json({ message: "Movimiento no encontrado" });
     }
 
-    const saldoDelta = mov.tipo === "debito" ? -Number(mov.monto) : Number(mov.monto);
-    await client.query(
-      `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
-      [saldoDelta, mov.cc_id]
-    );
+    if (mov.afecta_saldo !== false) {
+      const saldoDelta = mov.tipo === "debito" ? -Number(mov.monto) : Number(mov.monto);
+      await client.query(
+        `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
+        [saldoDelta, mov.cc_id]
+      );
+    }
     await client.query(`DELETE FROM cc_movimientos WHERE id = $1`, [movId]);
 
     await client.query("COMMIT");

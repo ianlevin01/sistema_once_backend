@@ -130,14 +130,15 @@ export default class CuentaCorrienteRepository {
     divisa_cobro,
     monto_original,
     cotizacion_usada,
+    afecta_saldo = true,
   }, client) {
     const db = client || pool;
 
     await db.query(
       `INSERT INTO cc_movimientos
          (cuenta_corriente_id, tipo, concepto, monto, order_id, metodo_pago,
-          divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, afecta_saldo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
         cuentaId,
         tipo,
@@ -149,18 +150,46 @@ export default class CuentaCorrienteRepository {
         divisa_cobro   || divisa_cuenta || "ARS",
         monto_original ?? monto,
         cotizacion_usada ?? null,
+        afecta_saldo,
       ]
     );
 
-    const delta = tipo === "debito" ? monto : -monto;
-    const res = await db.query(
-      `UPDATE cuentas_corrientes
-       SET saldo = saldo + $1, updated_at = NOW()
-       WHERE id = $2
-       RETURNING *`,
-      [delta, cuentaId]
-    );
+    if (afecta_saldo) {
+      const delta = tipo === "debito" ? monto : -monto;
+      const res = await db.query(
+        `UPDATE cuentas_corrientes
+         SET saldo = saldo + $1, updated_at = NOW()
+         WHERE id = $2
+         RETURNING *`,
+        [delta, cuentaId]
+      );
+      return res.rows[0];
+    }
+    const res = await db.query(`SELECT * FROM cuentas_corrientes WHERE id = $1`, [cuentaId]);
     return res.rows[0];
+  }
+
+  // ── Insertar comprobante no-CC solo para visualización ─────
+  async insertSoloVisualizacion({ cuentaId, tipo, concepto, monto, orderId, metodo_pago, divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada }, client) {
+    const db = client || pool;
+    await db.query(
+      `INSERT INTO cc_movimientos
+         (cuenta_corriente_id, tipo, concepto, monto, order_id, metodo_pago,
+          divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, afecta_saldo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, FALSE)`,
+      [
+        cuentaId,
+        tipo,
+        concepto,
+        monto,
+        orderId        || null,
+        metodo_pago    || null,
+        divisa_cuenta  || "ARS",
+        divisa_cobro   || divisa_cuenta || "ARS",
+        monto_original ?? monto,
+        cotizacion_usada ?? null,
+      ]
+    );
   }
 
   // ── Débito por comprobante (desde ComprobanteService) ──────
@@ -180,6 +209,7 @@ export default class CuentaCorrienteRepository {
       concepto:        concepto || `Comprobante — ${orderId?.slice(0, 8)}`,
       monto:           montoEnCuenta,
       orderId,
+      metodo_pago:     "Cuenta Corriente",
       divisa_cuenta:   divisa,
       divisa_cobro:    "ARS",
       monto_original:  total,
