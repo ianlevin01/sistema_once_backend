@@ -103,11 +103,11 @@ export default class WebOrderRepository {
         (numero, customer_id, customer_name, customer_email, customer_phone, observaciones, total, color, negocio_id)
       VALUES (
         CASE
-          WHEN $8 = '00000000-0000-0000-0000-000000000001'
+          WHEN $8::UUID = '00000000-0000-0000-0000-000000000001'::UUID
           THEN nextval('public.web_orders_numero_seq_oncepuntos')
           ELSE NULL
         END,
-        $1, $2, $3, $4, $5, $6, $7, $8
+        $1, $2, $3, $4, $5, $6, $7, $8::UUID
       )
       RETURNING *
     `, [
