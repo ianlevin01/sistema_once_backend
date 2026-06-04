@@ -80,7 +80,7 @@ export default class ProductRepository {
     ];
 
     const res = await pool.query(`
-      SELECT
+      SELECT DISTINCT ON (p.id)
         p.*,
         c.name AS category_name,
         ppo.pct_1 AS ovr_pct_1,
@@ -116,7 +116,7 @@ export default class ProductRepository {
         AND ($4::uuid IS NULL OR p.category_id = $4::uuid)
         AND ($5::numeric IS NULL OR p.costo_usd IS NULL
              OR p.costo_usd * $6::numeric * (1 + COALESCE(ppo.pct_1, $7::numeric) / 100.0) <= $5::numeric)
-      ORDER BY ${orderClause}
+      ORDER BY p.id, ${orderClause}
       LIMIT $1 OFFSET $2
     `, params);
 
