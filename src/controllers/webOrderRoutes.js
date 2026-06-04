@@ -70,22 +70,39 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   let { customer_id, customer_name, items, negocio_id } = req.body;
 
+  const hasAuthHeader = !!req.headers.authorization;
+  console.log("[WEB-ORDER POST] Inicio - hasAuth:", hasAuthHeader, "customer_id en body:", !!customer_id, "customer_name en body:", !!customer_name);
+
   // Intentar resolver desde JWT si no vino en el body
   if (!customer_id) {
     customer_id = await resolveCustomerFromToken(req);
+    console.log("[WEB-ORDER POST] Después resolveCustomerFromToken - customer_id:", !!customer_id, "hasAuth:", hasAuthHeader);
   }
 
+  // Si tiene header de Auth pero NO tiene customer_id → sesión inválida
+  if (hasAuthHeader && !customer_id && !customer_name) {
+    console.error("[WEB-ORDER ERROR] Usuario logueado sin customer_id - debe reiniciar sesión");
+    return res.status(401).json({
+      message: "Sesión expirada. Por favor, inicia sesión nuevamente.",
+      code: "SESSION_EXPIRED",
+    });
+  }
+
+  // Si no tiene auth ni customer_id/name → necesita datos del cliente
   if (!customer_id && !customer_name) {
+    console.error("[WEB-ORDER ERROR] Sin customer_id ni customer_name");
     return res.status(400).json({
       message: "Se requiere customer_id o datos del cliente (customer_name)",
     });
   }
+
   if (!items?.length) {
     return res.status(400).json({ message: "Items requeridos" });
   }
 
   try {
     const result = await svc.create({ ...req.body, customer_id, negocio_id: negocio_id || null });
+    console.log("[WEB-ORDER SUCCESS] Pedido creado - customer_id:", !!customer_id);
     return res.status(201).json(result);
   } catch (err) {
     console.error("webOrderRoutes POST error:", err.message);
