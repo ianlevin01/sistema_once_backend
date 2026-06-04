@@ -8,20 +8,41 @@ const router = Router();
 const svc = new WebOrderService();
 const JWT_SECRET = process.env.JWT_SECRET ?? "oncepuntos_secret_dev";
 
-// Extrae customer_id del JWT. Si el token es válido pero customer_id es null
-// (usuario registrado con edge case), lo busca en shop_users por id.
+// Extrae customer_id del JWT. Si no existe, crea un customer automáticamente.
 async function resolveCustomerFromToken(req) {
   const header = req.headers.authorization ?? "";
   if (!header.startsWith("Bearer ")) return null;
   try {
     const payload = jwt.verify(header.slice(7), JWT_SECRET);
     if (payload.customer_id) return payload.customer_id;
+
     // customer_id null en el token → buscar en shop_users
     if (payload.id) {
       const res = await pool.query(
         `SELECT customer_id FROM shop_users WHERE id = $1`, [payload.id]
       );
-      return res.rows[0]?.customer_id ?? null;
+      let customerId = res.rows[0]?.customer_id;
+
+      // Si aún no hay customer_id, crear uno nuevo
+      if (!customerId) {
+        const shopUser = await pool.query(
+          `SELECT email, name FROM shop_users WHERE id = $1`, [payload.id]
+        );
+        if (shopUser.rows[0]) {
+          const { email, name } = shopUser.rows[0];
+          const newCust = await pool.query(
+            `INSERT INTO customers (name, email, type) VALUES ($1, $2, 'web') RETURNING id`,
+            [name || email, email]
+          );
+          customerId = newCust.rows[0].id;
+          // Actualizar shop_users con el nuevo customer_id
+          await pool.query(
+            `UPDATE shop_users SET customer_id = $1 WHERE id = $2`,
+            [customerId, payload.id]
+          );
+        }
+      }
+      return customerId;
     }
     return null;
   } catch {

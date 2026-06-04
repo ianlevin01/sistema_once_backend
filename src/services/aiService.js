@@ -21,7 +21,7 @@ export default class AIService {
     if (cached && (now - cached.time) < CACHE_TTL) {
       products = cached.products;
     } else {
-      const all = await this.repo.search("", negocioId);
+      const all = await this.repo.searchByText("", negocioId);
       products = all.filter((p) => p.active === true);
       _cache.set(negocioId, { products, time: now });
     }
