@@ -80,43 +80,47 @@ export default class ProductRepository {
     ];
 
     const res = await pool.query(`
-      SELECT DISTINCT ON (p.id)
-        p.*,
-        c.name AS category_name,
-        ppo.pct_1 AS ovr_pct_1,
-        ppo.pct_2 AS ovr_pct_2,
-        ppo.pct_3 AS ovr_pct_3,
-        ppo.pct_4 AS ovr_pct_4,
-        ppo.pct_5 AS ovr_pct_5,
+      SELECT *
+      FROM (
+        SELECT DISTINCT ON (p.id)
+          p.*,
+          c.name AS category_name,
+          ppo.pct_1 AS ovr_pct_1,
+          ppo.pct_2 AS ovr_pct_2,
+          ppo.pct_3 AS ovr_pct_3,
+          ppo.pct_4 AS ovr_pct_4,
+          ppo.pct_5 AS ovr_pct_5,
 
-        COALESCE(
-          (
-            SELECT json_agg(json_build_object('id', pi.id, 'key', pi.key) ORDER BY pi.created_at)
-            FROM product_images pi
-            WHERE pi.product_id = p.id
-          ),
-          '[]'
-        ) AS images,
+          COALESCE(
+            (
+              SELECT json_agg(json_build_object('id', pi.id, 'key', pi.key) ORDER BY pi.created_at)
+              FROM product_images pi
+              WHERE pi.product_id = p.id
+            ),
+            '[]'
+          ) AS images,
 
-        COALESCE(
-          (
-            SELECT json_agg(json_build_object('warehouse_id', s.warehouse_id, 'quantity', s.quantity))
-            FROM stock s
-            WHERE s.product_id = p.id
-          ),
-          '[]'
-        ) AS stock
+          COALESCE(
+            (
+              SELECT json_agg(json_build_object('warehouse_id', s.warehouse_id, 'quantity', s.quantity))
+              FROM stock s
+              WHERE s.product_id = p.id
+            ),
+            '[]'
+          ) AS stock
 
-      FROM products p
-      LEFT JOIN categories c ON c.id = p.category_id
-      LEFT JOIN product_price_overrides ppo ON ppo.product_id = p.id
-      WHERE p.negocio_id = $3
-        AND p.deleted_at IS NULL
-        AND p.active = true
-        AND ($4::uuid IS NULL OR p.category_id = $4::uuid)
-        AND ($5::numeric IS NULL OR p.costo_usd IS NULL
-             OR p.costo_usd * $6::numeric * (1 + COALESCE(ppo.pct_1, $7::numeric) / 100.0) <= $5::numeric)
-      ORDER BY ${orderClause}, p.id
+        FROM products p
+        LEFT JOIN categories c ON c.id = p.category_id
+        LEFT JOIN product_price_overrides ppo ON ppo.product_id = p.id
+        WHERE p.negocio_id = $3
+          AND p.deleted_at IS NULL
+          AND p.active = true
+          AND ($4::uuid IS NULL OR p.category_id = $4::uuid)
+          AND ($5::numeric IS NULL OR p.costo_usd IS NULL
+               OR p.costo_usd * $6::numeric * (1 + COALESCE(ppo.pct_1, $7::numeric) / 100.0) <= $5::numeric)
+        ORDER BY p.id, ${orderClause}
+      ) AS deduped
+      ORDER BY ${orderClause}
       LIMIT $1 OFFSET $2
     `, params);
 
