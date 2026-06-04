@@ -71,6 +71,8 @@ export default class ProductRepository {
       orderClause = ORDER_MAP[sort] ?? "p.created_at DESC";
     }
 
+    const orderClauseFinal = orderClause.replace(/p\./g, '');
+
     const params = [
       limit, offset, negocioId,
       categoryId ?? null,
@@ -120,7 +122,7 @@ export default class ProductRepository {
                OR p.costo_usd * $6::numeric * (1 + COALESCE(ppo.pct_1, $7::numeric) / 100.0) <= $5::numeric)
         ORDER BY p.id, ${orderClause}
       ) AS deduped
-      ORDER BY ${orderClause}
+      ORDER BY ${orderClauseFinal}
       LIMIT $1 OFFSET $2
     `, params);
 
