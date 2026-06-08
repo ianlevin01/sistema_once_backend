@@ -2,6 +2,7 @@ import { Router } from "express";
 import pool from "../database/db.js";
 import CuentaCorrienteService from "../services/cuentaCorrienteService.js";
 import { requireAuth } from "./authRoutes.js";
+import bcrypt from "bcrypt";
 
 const router = Router();
 const svc = new CuentaCorrienteService();
@@ -87,10 +88,42 @@ router.post("/cliente/:customerId/cobranza", requireAuth, async (req, res) => {
   }
 });
 
-// PUT /movimientos/:movId  — editar un movimiento de cliente
+// PUT /movimientos/:movId  — editar un movimiento de cliente (requiere contraseña de admin para cambiar montos)
 router.put("/movimientos/:movId", requireAuth, async (req, res) => {
   const { movId } = req.params;
-  const { monto, concepto, metodo_pago, fecha } = req.body;
+  const { monto, concepto, metodo_pago, fecha, admin_password } = req.body;
+
+  // Validar que solo admin o superadmin pueden editar montos de cobranzas
+  if (monto !== undefined) {
+    const role = req.user.role;
+    if (role !== "admin" && role !== "superadmin") {
+      return res.status(403).json({ message: "Solo administradores pueden editar montos de cobranzas" });
+    }
+
+    // Validar contraseña de admin
+    if (!admin_password || !admin_password.trim()) {
+      return res.status(400).json({ message: "Contraseña de administrador requerida" });
+    }
+
+    try {
+      const userRes = await pool.query(
+        `SELECT password_hash FROM users WHERE id = $1`,
+        [req.user.id]
+      );
+      const user = userRes.rows[0];
+      if (!user) {
+        return res.status(500).json({ message: "Usuario no encontrado" });
+      }
+
+      const passwordValid = await bcrypt.compare(admin_password, user.password_hash);
+      if (!passwordValid) {
+        return res.status(403).json({ message: "Contraseña incorrecta" });
+      }
+    } catch (err) {
+      console.error("Error validando contraseña:", err);
+      return res.status(500).json({ message: "Error validando contraseña" });
+    }
+  }
 
   const client = await pool.connect();
   try {
@@ -153,9 +186,41 @@ router.put("/movimientos/:movId", requireAuth, async (req, res) => {
   }
 });
 
-// DELETE /movimientos/:movId — eliminar movimiento de cliente
+// DELETE /movimientos/:movId — eliminar movimiento de cliente (requiere contraseña de admin)
 router.delete("/movimientos/:movId", requireAuth, async (req, res) => {
   const { movId } = req.params;
+  const { admin_password } = req.body || {};
+
+  // Validar que solo admin o superadmin pueden eliminar cobranzas
+  const role = req.user.role;
+  if (role !== "admin" && role !== "superadmin") {
+    return res.status(403).json({ message: "Solo administradores pueden eliminar cobranzas" });
+  }
+
+  // Validar contraseña de admin
+  if (!admin_password || !admin_password.trim()) {
+    return res.status(400).json({ message: "Contraseña de administrador requerida" });
+  }
+
+  try {
+    const userRes = await pool.query(
+      `SELECT password_hash FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const user = userRes.rows[0];
+    if (!user) {
+      return res.status(500).json({ message: "Usuario no encontrado" });
+    }
+
+    const passwordValid = await bcrypt.compare(admin_password, user.password_hash);
+    if (!passwordValid) {
+      return res.status(403).json({ message: "Contraseña incorrecta" });
+    }
+  } catch (err) {
+    console.error("Error validando contraseña:", err);
+    return res.status(500).json({ message: "Error validando contraseña" });
+  }
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");

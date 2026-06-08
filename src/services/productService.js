@@ -348,9 +348,8 @@ export default class ProductService {
     const rows = products.map((p) => {
       const overrides   = extractOverrides(p);
       const prices      = buildComputedPrices(Number(p.costo_usd), config, overrides);
-      // Siempre 5 columnas de precio — si costo es null/0 buildComputedPrices devuelve []
-      // y el spread vacío desplaza todas las columnas siguientes.
-      const priceRow    = [0,1,2,3,4].map((i) => prices[i] != null ? Math.round(prices[i].price * 100) / 100 : '');
+      // Exportar precios en USD (no en ARS). Siempre 5 columnas de precio.
+      const priceRow    = [0,1,2,3,4].map((i) => prices[i] != null ? Math.round(prices[i].price_usd * 100) / 100 : '');
       const rawStock    = p.stock_by_name;
       const stockByName = typeof rawStock === 'string'
         ? (() => { try { return JSON.parse(rawStock); } catch { return {}; } })()
@@ -482,10 +481,11 @@ export default class ProductService {
       if (isNew) {
         // Calcular pct overrides para el nuevo producto
         const priceChanges = [];
-        if (effectiveCosto && cotizacion) {
+        if (effectiveCosto) {
           xlsxPrices.forEach((xlsxP, i) => {
             if (xlsxP == null) return;
-            const pctNuevo = (xlsxP / (effectiveCosto * cotizacion) - 1) * 100;
+            // Los precios en el Excel están en USD, no en ARS
+            const pctNuevo = (xlsxP / effectiveCosto - 1) * 100;
             const pctGlobal = globalPct[i];
             if (Math.abs(pctNuevo - pctGlobal) > PCT_TOL) {
               priceChanges.push({ field: `precio_${i+1}`, from: null, to: xlsxP, pct: Math.round(pctNuevo * 100) / 100 });
@@ -531,20 +531,20 @@ export default class ProductService {
       if (xlsxRubro && xlsxRubro.toLowerCase() !== (existing.category_name || '').toLowerCase())
         changes.push({ field: 'category', from: existing.category_name, to: xlsxRubro });
 
-      // Precios → pct overrides
+      // Precios → pct overrides (precios en USD)
       const ovrs = extractOverrides(existing);
       xlsxPrices.forEach((xlsxP, i) => {
         if (xlsxP == null) return;
         const n = i + 1;
-        // Precio actual que el sistema calcula
+        // Precio actual que el sistema calcula (en USD)
         const currentPct = ovrs?.[`pct_${n}`] != null ? Number(ovrs[`pct_${n}`]) : globalPct[i];
         const currentPrice = effectiveCosto
-          ? Math.round((Number(existing.costo_usd) * cotizacion * (1 + currentPct / 100)) * 100) / 100
+          ? Math.round((Number(existing.costo_usd) * (1 + currentPct / 100)) * 100) / 100
           : null;
         if (currentPrice != null && Math.abs(xlsxP - currentPrice) < 0.01) return; // sin cambio
-        // Calcular nuevo pct
-        if (!effectiveCosto || !cotizacion) return;
-        const pctNuevo = (xlsxP / (effectiveCosto * cotizacion) - 1) * 100;
+        // Calcular nuevo pct (precios en USD)
+        if (!effectiveCosto) return;
+        const pctNuevo = (xlsxP / effectiveCosto - 1) * 100;
         const fromPrice = currentPrice;
         changes.push({
           field: `precio_${n}`,
@@ -657,12 +657,12 @@ export default class ProductService {
               }
             }
 
-            // Price overrides para el nuevo
+            // Price overrides para el nuevo (precios en USD)
             const newOvr = {};
             let hasOvr = false;
             xlsxPrices.forEach((xlsxP, i) => {
-              if (xlsxP == null || !effectiveCosto || !cotizacion) return;
-              const pctNuevo = (xlsxP / (effectiveCosto * cotizacion) - 1) * 100;
+              if (xlsxP == null || !effectiveCosto) return;
+              const pctNuevo = (xlsxP / effectiveCosto - 1) * 100;
               if (Math.abs(pctNuevo - globalPct[i]) > PCT_TOL) {
                 newOvr[`pct_${i+1}`] = Math.round(pctNuevo * 10000) / 10000;
                 hasOvr = true;
@@ -758,14 +758,14 @@ export default class ProductService {
               }
             }
 
-            // Price overrides
+            // Price overrides (precios en USD)
             const newOvr = {};
             const existingOvrs = extractOverrides(existing) || {};
             let ovrChanged = false;
 
             xlsxPrices.forEach((xlsxP, i) => {
-              if (xlsxP == null || !effectiveCosto || !cotizacion) return;
-              const pctNuevo  = (xlsxP / (effectiveCosto * cotizacion) - 1) * 100;
+              if (xlsxP == null || !effectiveCosto) return;
+              const pctNuevo  = (xlsxP / effectiveCosto - 1) * 100;
               const pctGlobal = globalPct[i];
               if (Math.abs(pctNuevo - pctGlobal) <= PCT_TOL) {
                 newOvr[`pct_${i+1}`] = null; // vuelve al global
