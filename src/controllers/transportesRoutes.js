@@ -21,8 +21,8 @@ router.get("/", requireAuth, async (req, res) => {
 // Crear
 router.post("/", requireAuth, async (req, res) => {
   const { codigo, razon_social, domicilio, localidad, telefono, email } = req.body;
-  if (!codigo || !razon_social || !telefono) {
-    return res.status(400).json({ message: "codigo, razon_social y telefono son obligatorios" });
+  if (!razon_social || !razon_social.trim()) {
+    return res.status(400).json({ message: "Nombre (Razón Social) es obligatorio" });
   }
   try {
     const result = await pool.query(
@@ -40,8 +40,8 @@ router.post("/", requireAuth, async (req, res) => {
 // Editar
 router.put("/:id", requireAuth, async (req, res) => {
   const { codigo, razon_social, domicilio, localidad, telefono, email } = req.body;
-  if (!codigo || !razon_social || !telefono) {
-    return res.status(400).json({ message: "codigo, razon_social y telefono son obligatorios" });
+  if (!razon_social || !razon_social.trim()) {
+    return res.status(400).json({ message: "Nombre (Razón Social) es obligatorio" });
   }
   try {
     const result = await pool.query(
