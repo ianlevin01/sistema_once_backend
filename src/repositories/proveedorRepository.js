@@ -184,14 +184,15 @@ export default class ProveedorRepository {
 
     await db.query(
       `INSERT INTO cc_movimientos_prov
-         (cuenta_corriente_id, tipo, concepto, monto, order_id,
+         (cuenta_corriente_id, tipo, concepto, monto, order_id, metodo_pago,
           divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-       VALUES ($1, 'pago', $2, $3, $4, $5, $6, $7, $8)`,
+       VALUES ($1, 'pago', $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         cc.id,
         `Reposición — ${orderId.slice(0, 8)}`,
         montoEnCuenta,
         orderId,
+        "Cta Cte",
         divisa,
         "ARS",
         monto,
@@ -320,5 +321,29 @@ export default class ProveedorRepository {
     } finally {
       client.release();
     }
+  }
+
+  // ── Insertar movimiento solo visualización (no afecta saldo) ───
+  // Para reposiciones que no son Cta Cte (como en clientes)
+  async insertSoloVisualizacion({ cuentaId, tipo, concepto, monto, orderId, metodo_pago, divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada }, client) {
+    const db = client || pool;
+    await db.query(
+      `INSERT INTO cc_movimientos_prov
+         (cuenta_corriente_id, tipo, concepto, monto, order_id, metodo_pago,
+          divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, afecta_saldo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, FALSE)`,
+      [
+        cuentaId,
+        tipo,
+        concepto,
+        monto,
+        orderId        || null,
+        metodo_pago    || null,
+        divisa_cuenta  || "ARS",
+        divisa_cobro   || divisa_cuenta || "ARS",
+        monto_original ?? monto,
+        cotizacion_usada ?? null,
+      ]
+    );
   }
 }

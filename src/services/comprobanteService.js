@@ -318,6 +318,34 @@ export default class ComprobanteService {
         );
       }
 
+      // ── Reposición no-CC → solo visualización (como en clientes) ──
+      if (esReposicion && !esCuentaCorriente && data.supplier_id && totalARS > 0) {
+        try {
+          await client.query("SAVEPOINT visual_entry_prov");
+          const ccProv = await this.proveedorRepo.getOrCreateCC(data.supplier_id, client);
+          if (ccProv) {
+            const divisaCC      = ccProv.divisa ?? "ARS";
+            const montoEnCuenta = divisaCC === "USD" ? totalARS / cotizacion : totalARS;
+            await this.proveedorRepo.insertSoloVisualizacion({
+              cuentaId:        ccProv.id,
+              tipo:            "pago",
+              concepto:        `Reposición — ${orderRow.id.slice(0, 8)}`,
+              monto:           montoEnCuenta,
+              orderId:         orderRow.id,
+              metodo_pago:     data.payment_method,
+              divisa_cuenta:   divisaCC,
+              divisa_cobro:    "ARS",
+              monto_original:  totalARS,
+              cotizacion_usada: divisaCC === "USD" ? cotizacion : null,
+            }, client);
+          }
+          await client.query("RELEASE SAVEPOINT visual_entry_prov");
+        } catch (err) {
+          console.warn("CC provider visual entry failed (non-blocking):", err.message);
+          try { await client.query("ROLLBACK TO SAVEPOINT visual_entry_prov"); } catch {}
+        }
+      }
+
       // ── Devolución → sumar stock al warehouse ───────────────
       if (esDevolucion && warehouseId) {
         for (const item of data.items) {
