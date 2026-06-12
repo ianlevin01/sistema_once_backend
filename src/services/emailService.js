@@ -165,3 +165,39 @@ export async function sendCampaignEmail({ to, subject, html }) {
     throw err;
   }
 }
+
+export async function sendPasswordResetEmail({ to, customerName, resetLink }) {
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return;
+  if (!to) return;
+  const html = shell(`
+    <div style="background:linear-gradient(135deg,#fef3c7 0%,#fef08a 100%);border:1.5px solid #fbbf24;border-radius:12px;padding:22px 24px;margin-bottom:28px;text-align:center;">
+      <div style="font-size:40px;margin-bottom:8px;">🔐</div>
+      <p style="margin:0;font-size:20px;font-weight:800;color:#d97706;letter-spacing:-.3px;">Restablecer contraseña</p>
+      <p style="margin:8px 0 0;font-size:13px;color:#6b7280;">Recibimos una solicitud para restablecer tu contraseña</p>
+    </div>
+
+    <p style="font-size:15px;color:#374151;margin:0 0 6px;">Hola <strong>${customerName || 'cliente'}</strong>,</p>
+    <p style="font-size:15px;color:#374151;margin:0 0 20px;">Haz clic en el botón de abajo para restablecer tu contraseña. Este enlace expira en 15 minutos por razones de seguridad.</p>
+
+    <div style="text-align:center;margin:28px 0;">
+      <a href="${resetLink}" style="display:inline-block;background:#1d4ed8;color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:.02em;">Restablecer contraseña</a>
+    </div>
+
+    <div style="background:#f3f4f6;border-radius:10px;padding:16px 20px;margin-bottom:8px;">
+      <p style="margin:0;font-size:12px;color:#6b7280;"><strong style="color:#374151;">¿No solicitaste este cambio?</strong></p>
+      <p style="margin:4px 0 0;font-size:12px;color:#6b7280;">Ignora este correo si no eres quién solicitó el restablecimiento de contraseña. Tu cuenta estará segura.</p>
+    </div>
+
+    <p style="font-size:12px;color:#9ca3af;margin:20px 0 0;text-align:center;font-style:italic;">Por tu seguridad, nunca compartimos contraseñas por correo.</p>
+  `);
+  try {
+    await getTransporter().sendMail({
+      from: getFrom(),
+      to,
+      subject: '🔐 Restablecer tu contraseña — Oncepuntos',
+      html,
+    });
+  } catch (err) {
+    console.error('emailService reset:', err.message);
+  }
+}

@@ -23,6 +23,7 @@ import correoRoutes            from "./controllers/correoRoutes.js";
 import emailCampaignRoutes     from "./controllers/emailCampaignRoutes.js";
 import rentabilidadRoutes      from "./controllers/rentabilidadRoutes.js";
 import printRoutes             from "./controllers/printRoutes.js";
+import passwordResetRoutes     from "./controllers/passwordResetRoutes.js";
 
 
 const app = express();
@@ -56,6 +57,7 @@ app.use("/api/vendedores", vendedoresRoutes);
 app.use("/api/config", config);
 app.use("/api/warehouses", warehouses);
 app.use("/api/shop", shopAuthRouter);
+app.use("/api/shop/password-reset", passwordResetRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/proveedores",        proveedorRoutes);
