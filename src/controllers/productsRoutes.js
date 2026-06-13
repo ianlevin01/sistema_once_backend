@@ -169,6 +169,19 @@ router.get("/:id", resolveNegocio, async (req, res) => {
 });
 
 router.get("/", resolveNegocio, async (req, res) => {
+  // Si se pasan ids, devolver solo esos productos (para validación)
+  if (req.query.ids) {
+    const ids = String(req.query.ids).split(',').map(id => id.trim()).filter(Boolean);
+    if (ids.length === 0) return res.json([]);
+    try {
+      const result = await svc.getByIds(ids, req.user.negocio_id);
+      return res.json(result);
+    } catch (err) {
+      console.error("Error getting products by ids:", err);
+      return res.status(500).json({ message: "Error fetching products" });
+    }
+  }
+
   const { limit = 30, offset = 0, category_id, sort = "default", max_price } = req.query;
   const maxPrice = max_price ? Number(max_price) : null;
   const result = await svc.getPaginated(limit, offset, category_id ?? null, sort, req.user.negocio_id, maxPrice);

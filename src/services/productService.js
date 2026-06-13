@@ -222,6 +222,15 @@ export default class ProductService {
     };
   }
 
+  async getByIds(ids, negocioId) {
+    if (!ids || ids.length === 0) return [];
+    const { rows } = await pool.query(
+      `SELECT id, name, code, active FROM products WHERE id = ANY($1) AND negocio_id = $2`,
+      [ids, negocioId]
+    );
+    return rows;
+  }
+
   async create(p, files, negocioId) {
     if (p.code) {
       const deleted = await this.repo.findDeletedByCode(p.code, negocioId);
