@@ -8,6 +8,16 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 // Cache por negocio para no recargar todo el catálogo en cada request
 const _cache = new Map(); // negocioId → { products, time }
 
+// Cleanup expired cache entries every 10 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [negocioId, data] of _cache.entries()) {
+    if (now - data.time > CACHE_TTL) {
+      _cache.delete(negocioId);
+    }
+  }
+}, 10 * 60 * 1000);
+
 export default class AIService {
   repo = new ProductRepository();
   s3   = new S3Service();

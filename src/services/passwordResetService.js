@@ -13,6 +13,16 @@ const rateLimitStore = new Map();
 const RATE_LIMIT_WINDOW = 60 * 60 * 1000; // 1 hour
 const RATE_LIMIT_MAX_ATTEMPTS = 3;
 
+// Cleanup old rate limit entries every 30 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [email, data] of rateLimitStore.entries()) {
+    if (now - data.resetTime > RATE_LIMIT_WINDOW) {
+      rateLimitStore.delete(email);
+    }
+  }
+}, 30 * 60 * 1000);
+
 export default class PasswordResetService {
   /**
    * Request password reset for an email
