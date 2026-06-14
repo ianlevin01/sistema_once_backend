@@ -464,13 +464,33 @@ export default class ProductService {
 
     const PCT_TOL = 0.01; // ±0.01% se considera igual al global
 
-    // ── 3. Calcular diff ─────────────────────────────────────────
+    // ── 3. Validar códigos duplicados en el Excel ────────────────
+    const seenCodes = new Set();
+    const duplicateCodes = [];
+    for (const row of dataRows) {
+      const code = String(row[idxCodigo] ?? '').trim();
+      if (!code) continue;
+      if (seenCodes.has(code)) {
+        duplicateCodes.push(code);
+      } else {
+        seenCodes.add(code);
+      }
+    }
+    const uniqueDuplicates = [...new Set(duplicateCodes)];
+
+    // ── 4. Calcular diff ─────────────────────────────────────────
+    // Mantener un nuevo set para detectar duplicados al procesar el diff
+    const processedCodes = new Set();
     const diff = [];
     let unchanged = 0;
 
     for (const row of dataRows) {
       const code = String(row[idxCodigo] ?? '').trim();
       if (!code) continue;
+
+      // Saltar duplicados: usar solo la primera ocurrencia de cada código
+      if (processedCodes.has(code)) continue;
+      processedCodes.add(code);
 
       const existing = prodMap.get(code);
       const isNew    = !existing;
@@ -592,7 +612,12 @@ export default class ProductService {
       unchanged,
     };
 
-    if (!apply) return { summary, diff };
+    if (!apply) return {
+      summary,
+      diff,
+      hasDuplicates: uniqueDuplicates.length > 0,
+      duplicateCodes: uniqueDuplicates,
+    };
 
     // ── 4. Aplicar cambios ───────────────────────────────────────
     const selectedSet = new Set(selectedCodes.map(String));
@@ -822,6 +847,16 @@ export default class ProductService {
     }
 
     invalidatePriceConfigCache(negocioId);
-    return { summary, diff, applied, errors };
+    return {
+      summary,
+      diff,
+      applied,
+      errors,
+      hasDuplicates: uniqueDuplicates.length > 0,
+      duplicateCodes: uniqueDuplicates,
+      duplicateWarning: uniqueDuplicates.length > 0
+        ? `Se encontraron ${uniqueDuplicates.length} código(s) duplicado(s) en el Excel. Se utilizó solo la primera ocurrencia de cada uno: ${uniqueDuplicates.join(', ')}`
+        : null,
+    };
   }
 }
