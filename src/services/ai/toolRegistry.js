@@ -282,8 +282,13 @@ const ALL_TOOLS = [
       },
     },
     async execute({ texto }, { negocioId }) {
-      const results = await productRepo.searchByText(texto, negocioId);
+      const [results, whRes] = await Promise.all([
+        productRepo.searchByText(texto, negocioId),
+        pool.query(`SELECT id, name FROM warehouses WHERE negocio_id = $1`, [negocioId]),
+      ]);
       if (results.length === 0) return { encontrados: 0, productos: [] };
+      const whMap = {};
+      whRes.rows.forEach((w) => { whMap[w.id] = w.name; });
       return {
         encontrados: results.length,
         productos: results.slice(0, 10).map((p) => ({
@@ -293,10 +298,12 @@ const ALL_TOOLS = [
           activo:      p.active,
           costo_usd:   p.costo_usd,
           stock_total: (p.stock || []).reduce((sum, s) => sum + (Number(s.quantity) || 0), 0),
-          stock_por_deposito: (p.stock || []).map((s) => ({
-            warehouse_id: s.warehouse_id,
-            cantidad:     Number(s.quantity) || 0,
-          })),
+          stock_por_deposito: (p.stock || [])
+            .filter((s) => Number(s.quantity) > 0)
+            .map((s) => ({
+              deposito: whMap[s.warehouse_id] || s.warehouse_id,
+              cantidad: Number(s.quantity) || 0,
+            })),
         })),
       };
     },
