@@ -24,6 +24,7 @@ import emailCampaignRoutes     from "./controllers/emailCampaignRoutes.js";
 import rentabilidadRoutes      from "./controllers/rentabilidadRoutes.js";
 import printRoutes             from "./controllers/printRoutes.js";
 import passwordResetRoutes     from "./controllers/passwordResetRoutes.js";
+import aiAgentRoutes           from "./controllers/aiAgentRoutes.js";
 
 
 const app = express();
@@ -50,6 +51,7 @@ app.use("/api/products", products);
 app.use("/api/remitos", remitos);
 app.use("/api/comprobantes", comprobantes);
 app.use("/api/cash", cash);
+app.use("/api/ai/agent", aiAgentRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/web-orders", webOrders);
 app.use("/api/cuenta-corriente", cuentaCorrienteRoutes);
