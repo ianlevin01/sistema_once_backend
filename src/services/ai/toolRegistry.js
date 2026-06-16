@@ -110,7 +110,7 @@ const ALL_TOOLS = [
     action: "read",
     definition: {
       name: "consultar_cuenta_corriente",
-      description: "Consulta el saldo y los últimos movimientos de la cuenta corriente de un cliente.",
+      description: "Consulta el saldo y los movimientos de la cuenta corriente de un cliente. Cada movimiento incluye saldo_acumulado (saldo exacto después de ese movimiento) para responder preguntas históricas sin necesidad de calcular.",
       parameters: {
         type: "object",
         properties: {
@@ -120,19 +120,63 @@ const ALL_TOOLS = [
       },
     },
     async execute({ customer_id }) {
-      const data = await ccRepo.getByCustomer(customer_id);
-      if (!data) return { error: "El cliente no tiene cuenta corriente abierta" };
+      const cuentaRes = await pool.query(
+        `SELECT cc.id, cc.saldo, cc.divisa, c.name AS customer_name
+         FROM cuentas_corrientes cc
+         JOIN customers c ON c.id = cc.customer_id
+         WHERE cc.customer_id = $1`,
+        [customer_id]
+      );
+      if (!cuentaRes.rows[0]) return { error: "El cliente no tiene cuenta corriente abierta" };
+      const cuenta = cuentaRes.rows[0];
+
+      const movRes = await pool.query(
+        `SELECT
+           m.tipo,
+           m.concepto,
+           m.monto,
+           m.monto_original,
+           m.divisa_cobro,
+           m.metodo_pago,
+           m.created_at,
+           o.tipo AS order_tipo,
+           SUM(
+             CASE
+               WHEN m.tipo = 'debito' AND COALESCE(m.afecta_saldo, true) THEN m.monto
+               WHEN m.tipo = 'pago'   AND COALESCE(m.afecta_saldo, true) THEN -m.monto
+               ELSE 0
+             END
+           ) OVER (ORDER BY m.created_at ASC, m.id ASC) AS saldo_acumulado
+         FROM cc_movimientos m
+         LEFT JOIN orders o ON o.id = m.order_id
+         WHERE m.cuenta_corriente_id = $1
+         ORDER BY m.created_at DESC
+         LIMIT 50`,
+        [cuenta.id]
+      );
+
+      const movimientos = movRes.rows.map((m) => ({
+        fecha:           m.created_at,
+        categoria:       m.tipo === "pago" ? "cobranza" : "debito",
+        concepto:        m.concepto    || null,
+        comprobante:     m.order_tipo  || null,
+        monto:           Number(m.monto),
+        monto_original:  Number(m.monto_original ?? m.monto),
+        divisa_original: m.divisa_cobro,
+        metodo_pago:     m.metodo_pago || null,
+        saldo_acumulado: Number(m.saldo_acumulado),
+      }));
+
+      const cobranzas = movimientos.filter((m) => m.categoria === "cobranza");
+
       return {
-        cliente:  data.customer_name,
-        saldo:    data.saldo,
-        divisa:   data.divisa,
-        movimientos_recientes: (data.movimientos || []).slice(0, 15).map((m) => ({
-          tipo:        m.tipo,
-          monto:       m.monto,
-          descripcion: m.descripcion || null,
-          comprobante: m.order_tipo  || null,
-          fecha:       m.created_at,
-        })),
+        cliente:          cuenta.customer_name,
+        saldo_actual:     Number(cuenta.saldo),
+        divisa:           cuenta.divisa,
+        total_movimientos: movimientos.length,
+        hay_cobranzas:    cobranzas.length > 0,
+        ultima_cobranza:  cobranzas.length > 0 ? cobranzas[0] : null,
+        movimientos,
       };
     },
   },

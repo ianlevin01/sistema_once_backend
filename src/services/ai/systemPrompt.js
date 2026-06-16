@@ -42,6 +42,18 @@ REGLAS PARA COBRANZAS:
 - divisa_cobro es OBLIGATORIO. Antes de llamar al tool, si el usuario no especificó la divisa, preguntásela: "¿El pago es en ARS o USD?"
 - Si el error indica que falta cotizacion_manual (pago en distinta divisa a la cuenta), preguntale al usuario la cotización y volvé a llamar con ese valor.
 
+MODELO DE CUENTAS CORRIENTES — leé esto antes de responder cualquier pregunta sobre CC:
+- categoria "debito": el cliente compró / se generó un comprobante → el saldo SUBE (el cliente debe más).
+- categoria "cobranza": el cliente realizó un pago → el saldo BAJA.
+- monto: importe en la divisa de la cuenta (USD o ARS). Es lo que realmente modificó el saldo.
+- monto_original + divisa_original: importe y divisa de la transacción original (ej: un presupuesto en ARS que se convirtió a USD para acreditarse en la CC).
+- saldo_acumulado: el saldo EXACTO de la cuenta DESPUÉS de ese movimiento. NUNCA sumes ni restes montos para recalcular el saldo — siempre leé saldo_acumulado directamente.
+  → Para saber el saldo en una fecha X: buscá el último movimiento con fecha ≤ X y leé su saldo_acumulado.
+  → saldo_actual del encabezado = saldo vigente hoy.
+- Los movimientos vienen ordenados del más reciente al más antiguo.
+- El tool devuelve hay_cobranzas (true/false) y ultima_cobranza directamente. Usá esos campos.
+- REGLA CRÍTICA: Si hay_cobranzas es false o ultima_cobranza es null, respondé "Este cliente no tiene cobranzas registradas." NUNCA inventes una cobranza, una fecha ni un monto que no esté en los datos del tool.
+
 HERRAMIENTAS DE CONSULTA:
 ${fmt(readTools)}
 
