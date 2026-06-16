@@ -25,6 +25,9 @@ import rentabilidadRoutes      from "./controllers/rentabilidadRoutes.js";
 import printRoutes             from "./controllers/printRoutes.js";
 import passwordResetRoutes     from "./controllers/passwordResetRoutes.js";
 import aiAgentRoutes           from "./controllers/aiAgentRoutes.js";
+import backupRoutes            from "./controllers/backupRoutes.js";
+import cron                    from "node-cron";
+import { runBackup }           from "./services/backupService.js";
 
 
 const app = express();
@@ -70,9 +73,16 @@ app.use("/api/correo",             correoRoutes);
 app.use("/api/email-campaign",     emailCampaignRoutes);
 app.use("/api/rentabilidad",       rentabilidadRoutes);
 app.use("/api/print",              printRoutes);
+app.use("/api/backup",             backupRoutes);
 
 // Server
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
   console.log("")
+
+  // Backup diario a las 04:00 ART (America/Argentina/Buenos_Aires)
+  cron.schedule("0 4 * * *", () => { runBackup(); }, {
+    timezone: "America/Argentina/Buenos_Aires",
+  });
+  console.log("[backup] Cron programado: 04:00 ART todos los días → s3://onces3/backups/oncepuntos_daily.sql.gz");
 });
