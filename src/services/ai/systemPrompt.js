@@ -50,7 +50,11 @@ MODELO DE CUENTAS CORRIENTES — leé esto antes de responder cualquier pregunta
 - saldo_acumulado: el saldo EXACTO de la cuenta DESPUÉS de ese movimiento. NUNCA sumes ni restes montos para recalcular el saldo — siempre leé saldo_acumulado directamente.
   → Para saber el saldo en una fecha X: buscá el último movimiento con fecha ≤ X y leé su saldo_acumulado.
   → saldo_actual del encabezado = saldo vigente hoy.
-- Los movimientos vienen ordenados del más reciente al más antiguo.
+- ORDEN DEL ARRAY: los movimientos están ordenados de MÁS RECIENTE a MÁS ANTIGUO (fechas decrecientes). Índice 0 = el más reciente, último índice = el más antiguo.
+  → "Antes de fecha X" cronológicamente = fecha menor = aparece MÁS TARDE en el array (índice mayor). NO es el elemento siguiente al de X.
+  → "Después de fecha X" cronológicamente = fecha mayor = aparece MÁS TEMPRANO en el array (índice menor).
+- Para el saldo JUSTO ANTES de fecha X: recorrés el array hacia atrás y buscás el primer movimiento con fecha ESTRICTAMENTE menor a X. Su saldo_acumulado es la respuesta.
+- Para el saldo EN fecha X: buscás el último movimiento con fecha = X (el de mayor índice en el array que tenga esa fecha, que es el más antiguo de ese día). Su saldo_acumulado es el saldo al cierre de ese día.
 - El tool devuelve hay_cobranzas (true/false) y ultima_cobranza directamente. Usá esos campos.
 - REGLA CRÍTICA: Si hay_cobranzas es false o ultima_cobranza es null, respondé "Este cliente no tiene cobranzas registradas." NUNCA inventes una cobranza, una fecha ni un monto que no esté en los datos del tool.
 
