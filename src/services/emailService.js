@@ -166,6 +166,56 @@ export async function sendCampaignEmail({ to, subject, html }) {
   }
 }
 
+export async function sendProductRecommendationEmail({ to, customerName, subject, intro, closing, products }) {
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return;
+  if (!to) return;
+
+  const cloudfrontDomain = process.env.CLOUDFRONT_DOMAIN;
+
+  const productCards = products.map((p) => {
+    const imageKey = p.images?.[0]?.key;
+    const imageUrl = imageKey && cloudfrontDomain ? `https://${cloudfrontDomain}/${imageKey}` : null;
+    const desc = p.description ? p.description.slice(0, 100) + (p.description.length > 100 ? "…" : "") : null;
+    return `
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:12px;background:#fafafa;">
+        <tr>
+          ${imageUrl ? `<td width="88" style="padding:0;vertical-align:top;"><img src="${imageUrl}" alt="${p.name}" width="88" height="88" style="display:block;object-fit:cover;width:88px;height:88px;" /></td>` : ""}
+          <td style="padding:14px 16px;vertical-align:middle;">
+            <p style="margin:0;font-size:15px;font-weight:700;color:#111827;">${p.name}</p>
+            ${desc ? `<p style="margin:5px 0 0;font-size:13px;color:#6b7280;line-height:1.4;">${desc}</p>` : ""}
+          </td>
+        </tr>
+      </table>`;
+  }).join("");
+
+  const html = shell(`
+    <p style="font-size:15px;color:#374151;margin:0 0 6px;">Hola <strong>${customerName || "cliente"}</strong>,</p>
+    <p style="font-size:15px;color:#374151;margin:0 0 24px;line-height:1.6;">${intro}</p>
+
+    <p style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin:0 0 10px;">Novedades para vos</p>
+    ${productCards}
+
+    <div style="background:#eff6ff;border-radius:10px;padding:16px 20px;margin:24px 0 20px;">
+      <p style="margin:0;font-size:14px;color:#1d4ed8;line-height:1.5;">${closing}</p>
+    </div>
+
+    <div style="text-align:center;margin:0 0 24px;">
+      <a href="https://oncepuntos.com.ar" style="display:inline-block;background:#1d4ed8;color:#fff;text-decoration:none;padding:13px 30px;border-radius:8px;font-weight:700;font-size:14px;letter-spacing:.02em;">Ir a la tienda →</a>
+    </div>
+
+    <p style="font-size:11px;color:#d1d5db;margin:0;text-align:center;">
+      Recibís este correo porque realizaste un pedido en Oncepuntos.
+    </p>
+  `);
+
+  try {
+    await getTransporter().sendMail({ from: getFrom(), to, subject, html });
+  } catch (err) {
+    console.error("emailService recommendation:", err.message);
+    throw err;
+  }
+}
+
 export async function sendPasswordResetEmail({ to, customerName, resetLink }) {
   if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return;
   if (!to) return;

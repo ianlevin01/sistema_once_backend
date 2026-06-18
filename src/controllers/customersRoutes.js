@@ -2,6 +2,7 @@ import { Router } from "express";
 import CustomerService from "../services/customerService.js";
 import CuentaCorrienteRepository from "../repositories/cuentaCorrienteRepository.js";
 import { requireAuth } from "./authRoutes.js";
+import pool from "../database/db.js";
 
 const router = Router();
 const svc    = new CustomerService();
@@ -33,6 +34,34 @@ router.post("/:id/cuenta-corriente", requireAuth, async (req, res) => {
   } catch (err) {
     console.error("Error abriendo CC:", err);
     return res.status(500).json({ message: err.message || "Error interno" });
+  }
+});
+
+// Historial de emails de marketing automático
+router.get("/marketing-log", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         eml.id, eml.sent_at, eml.subject, eml.email,
+         c.name AS customer_name,
+         COALESCE(
+           json_agg(json_build_object('name', p.name))
+           FILTER (WHERE p.id IS NOT NULL),
+           '[]'
+         ) AS products
+       FROM email_marketing_log eml
+       LEFT JOIN customers c ON c.id = eml.customer_id
+       LEFT JOIN products p ON p.id = ANY(eml.product_ids)
+       WHERE eml.negocio_id = $1
+       GROUP BY eml.id, eml.sent_at, eml.subject, eml.email, c.name
+       ORDER BY eml.sent_at DESC
+       LIMIT 200`,
+      [req.user.negocio_id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("Error GET /customers/marketing-log:", err);
+    res.status(500).json({ message: err.message });
   }
 });
 

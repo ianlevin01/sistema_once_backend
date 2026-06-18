@@ -94,4 +94,36 @@ router.put("/precios", requireAuth, async (req, res) => {
   }
 });
 
+// GET /config/marketing
+router.get("/marketing", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT email_marketing_enabled FROM negocios WHERE id = $1`,
+      [req.user.negocio_id]
+    );
+    return res.json({ email_marketing_enabled: rows[0]?.email_marketing_enabled ?? false });
+  } catch (err) {
+    console.error("Error GET /config/marketing:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// PATCH /config/marketing
+router.patch("/marketing", requireAuth, async (req, res) => {
+  const { email_marketing_enabled } = req.body;
+  if (typeof email_marketing_enabled !== "boolean") {
+    return res.status(400).json({ message: "email_marketing_enabled debe ser boolean" });
+  }
+  try {
+    await pool.query(
+      `UPDATE negocios SET email_marketing_enabled = $1 WHERE id = $2`,
+      [email_marketing_enabled, req.user.negocio_id]
+    );
+    return res.json({ email_marketing_enabled });
+  } catch (err) {
+    console.error("Error PATCH /config/marketing:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
 export default router;

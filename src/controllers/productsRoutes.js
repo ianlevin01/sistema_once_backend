@@ -161,6 +161,38 @@ router.post("/import", requireAuth, upload.single("file"), async (req, res) => {
   }
 });
 
+// ── Generar imagen con IA (gpt-image-1) ───────────────────────
+router.post("/generate-image", requireAuth, upload.single("referenceImage"), async (req, res) => {
+  const prompt = req.body.prompt;
+  if (!prompt?.trim()) return res.status(400).json({ message: "El prompt es requerido" });
+  try {
+    const { default: OpenAI, toFile } = await import("openai");
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    let response;
+    if (req.file) {
+      const imageFile = await toFile(req.file.buffer, "reference.png", { type: req.file.mimetype });
+      response = await openai.images.edit({
+        model: "gpt-image-1",
+        image: imageFile,
+        prompt: prompt.trim(),
+        n: 1,
+        size: "1024x1024",
+      });
+    } else {
+      response = await openai.images.generate({
+        model: "gpt-image-1",
+        prompt: prompt.trim(),
+        n: 1,
+        size: "1024x1024",
+      });
+    }
+    return res.json({ b64: response.data[0].b64_json });
+  } catch (err) {
+    console.error("Error POST /products/generate-image:", err);
+    return res.status(500).json({ message: err.message || "Error generando imagen" });
+  }
+});
+
 // Obtener producto por id
 router.get("/:id", resolveNegocio, async (req, res) => {
   const result = await svc.getById(req.params.id, req.user.negocio_id);

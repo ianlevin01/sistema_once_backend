@@ -28,7 +28,15 @@ import aiAgentRoutes           from "./controllers/aiAgentRoutes.js";
 import backupRoutes            from "./controllers/backupRoutes.js";
 import cron                    from "node-cron";
 import { runBackup }           from "./services/backupService.js";
+import { runRecommendationBatch } from "./services/productRecommendationService.js";
 
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[server] unhandledRejection — el proceso sigue corriendo:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[server] uncaughtException — el proceso sigue corriendo:", err.message);
+});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -85,4 +93,14 @@ app.listen(PORT, "0.0.0.0", () => {
     timezone: "America/Argentina/Buenos_Aires",
   });
   console.log("[backup] Cron programado: 04:00 ART todos los días → s3://onces3/backups/oncepuntos_daily.sql.gz");
+
+  // Recomendaciones por email: 07:30 ART todos los días
+  cron.schedule("30 7 * * *", () => {
+    runRecommendationBatch().catch((err) =>
+      console.error("[recommendations] Error no capturado en batch:", err.message)
+    );
+  }, {
+    timezone: "America/Argentina/Buenos_Aires",
+  });
+  console.log("[recommendations] Cron programado: 07:30 ART todos los días");
 });
