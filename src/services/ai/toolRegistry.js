@@ -6,6 +6,9 @@ import CustomerService from "../customerService.js";
 import ProductRepository from "../../repositories/productRepository.js";
 import OrderRepository from "../../repositories/orderRepository.js";
 import ProveedorRepository from "../../repositories/proveedorRepository.js";
+import S3Service from "../S3Service.js";
+
+const s3 = new S3Service();
 
 const customerRepo  = new CustomerRepository();
 const customerSvc   = new CustomerService();
@@ -341,6 +344,7 @@ const ALL_TOOLS = [
           codigo:      p.code,
           activo:      p.active,
           costo_usd:   p.costo_usd,
+          imagen_url:  p.images?.[0]?.key ? s3.getPublicUrl(p.images[0].key) : null,
           stock_total: (p.stock || []).reduce((sum, s) => sum + (Number(s.quantity) || 0), 0),
           stock_por_deposito: (p.stock || [])
             .filter((s) => Number(s.quantity) > 0)
