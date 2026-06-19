@@ -136,7 +136,7 @@ export default class OrderRepository {
 
   async getLastSalePrice(customerId, productId) {
     const res = await pool.query(
-      `SELECT oi.unit_price, o.created_at
+      `SELECT oi.unit_price, o.created_at, o.divisa, o.cotizacion_dolar
        FROM order_items oi
        JOIN orders o ON o.id = oi.order_id
        WHERE o.customer_id = $1

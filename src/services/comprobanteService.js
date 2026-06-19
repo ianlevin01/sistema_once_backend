@@ -110,8 +110,8 @@ export default class ComprobanteService {
           customer_id, supplier_id, user_id, warehouse_id,
           total, profit, status, tipo, vendedor, price_type, texto_libre,
           es_consumidor_final, consumidor_final_nombre, divisa, destino, negocio_id,
-          created_by_user_id, created_by_name, descuento_pct
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+          created_by_user_id, created_by_name, descuento_pct, cotizacion_dolar
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
         RETURNING *
       `, [
         data.customer_id  || null,
@@ -131,6 +131,7 @@ export default class ComprobanteService {
         data.created_by_user_id || null,
         data.created_by_name    || null,
         descuentoPct,
+        preciosEnUSD ? cotizacion : null,
       ]);
       const orderRow = order.rows[0];
 

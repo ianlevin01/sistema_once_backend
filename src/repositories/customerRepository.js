@@ -64,13 +64,14 @@ export default class CustomerRepository {
   async update(id, customer) {
     const res = await pool.query(
       `UPDATE customers
-       SET name=$1, phone=$2, email=$3,
-           domicilio=$4, localidad=$5, provincia=$6,
-           codigo_postal=$7, transporte=$8, divisa=$9, vendedor=$10
-       WHERE id=$11
+       SET name=$1, document=$2, phone=$3, email=$4,
+           domicilio=$5, localidad=$6, provincia=$7,
+           codigo_postal=$8, transporte=$9, divisa=$10, vendedor=$11
+       WHERE id=$12
        RETURNING *`,
       [
         customer.name,
+        customer.document      || null,
         customer.phone         || null,
         customer.email         || null,
         customer.domicilio     || null,
