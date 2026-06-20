@@ -183,6 +183,51 @@ export default class ProductService {
     );
   }
 
+  async getCartRecommendations(cartProductIds, negocioId, limit = 6) {
+    const DISTANCE_THRESHOLD = 0.50;
+    const config = await getPriceConfig(negocioId);
+    const { rows } = await pool.query(
+      `WITH centroid AS (
+         SELECT avg(embedding) AS vec
+         FROM products
+         WHERE id = ANY($2) AND negocio_id = $1
+       )
+       SELECT
+         p.id, p.name, p.code, p.description, p.costo_usd, p.active,
+         c.name AS category,
+         ppo.pct_1 AS ovr_pct_1, ppo.pct_2 AS ovr_pct_2,
+         ppo.pct_3 AS ovr_pct_3, ppo.pct_4 AS ovr_pct_4,
+         ppo.pct_5 AS ovr_pct_5,
+         COALESCE(
+           (SELECT json_agg(json_build_object('id', pi.id, 'key', pi.key) ORDER BY pi.created_at)
+            FROM product_images pi WHERE pi.product_id = p.id),
+           '[]'
+         ) AS images
+       FROM products p
+       CROSS JOIN centroid
+       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN product_price_overrides ppo ON ppo.product_id = p.id
+       WHERE p.negocio_id = $1
+         AND p.active = true
+         AND p.deleted_at IS NULL
+         AND p.embedding IS NOT NULL
+         AND p.id != ALL($2)
+         AND (p.embedding <=> centroid.vec) < $4
+       ORDER BY p.embedding <=> centroid.vec
+       LIMIT $3`,
+      [negocioId, cartProductIds, limit, DISTANCE_THRESHOLD]
+    );
+    return rows.map((p) => {
+      const overrides = extractOverrides(p);
+      return {
+        ...p,
+        prices: buildComputedPrices(p.costo_usd, config, overrides),
+        has_price_override: overrides !== null,
+        images: this.addUrlsToImages(p.images),
+      };
+    });
+  }
+
   async getById(id, negocioId) {
     const product = await this.repo.getById(id);
     const config  = await getPriceConfig(negocioId);
