@@ -167,10 +167,13 @@ router.post("/generate-image", requireAuth, upload.single("referenceImage"), asy
   if (!prompt?.trim()) return res.status(400).json({ message: "El prompt es requerido" });
   try {
     const { default: OpenAI, toFile } = await import("openai");
+    const { default: sharp }          = await import("sharp");
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     let response;
     if (req.file) {
-      const imageFile = await toFile(req.file.buffer, "reference.png", { type: req.file.mimetype });
+      // gpt-image-1 requiere PNG con canal alpha (RGBA) — convertir cualquier formato
+      const pngBuffer = await sharp(req.file.buffer).ensureAlpha().png().toBuffer();
+      const imageFile = await toFile(pngBuffer, "reference.png", { type: "image/png" });
       response = await openai.images.edit({
         model: "gpt-image-1",
         image: imageFile,
@@ -190,6 +193,21 @@ router.post("/generate-image", requireAuth, upload.single("referenceImage"), asy
   } catch (err) {
     console.error("Error POST /products/generate-image:", err);
     return res.status(500).json({ message: err.message || "Error generando imagen" });
+  }
+});
+
+// Recomendaciones basadas en el carrito (centroide de embeddings)
+router.get("/cart-recommendations", resolveNegocio, async (req, res) => {
+  const { product_ids, limit = 6 } = req.query;
+  if (!product_ids) return res.json([]);
+  const ids = String(product_ids).split(",").map((s) => s.trim()).filter(Boolean);
+  if (ids.length === 0) return res.json([]);
+  try {
+    const result = await svc.getCartRecommendations(ids, req.user.negocio_id, Number(limit));
+    return res.json(result);
+  } catch (err) {
+    console.error("Error GET /products/cart-recommendations:", err);
+    return res.status(500).json({ message: err.message });
   }
 });
 
