@@ -19,6 +19,7 @@ function buildResponse(user) {
     warehouse_name: user.warehouse_name,
     pct_vendedor:   user.pct_vendedor ?? 0,
     negocio_id:     user.negocio_id,
+    negocio_name:   user.negocio_name,
   };
   const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "12h" });
   return { token, user: payload };
@@ -27,9 +28,10 @@ function buildResponse(user) {
 // Helper: busca usuario activo por email con su warehouse
 async function findUserByEmail(email) {
   const result = await pool.query(
-    `SELECT u.*, w.name AS warehouse_name
+    `SELECT u.*, w.name AS warehouse_name, n.name AS negocio_name
      FROM users u
      LEFT JOIN warehouses w ON w.id = u.warehouse_id
+     LEFT JOIN negocios n ON n.id = u.negocio_id
      WHERE u.email = $1 AND u.active = true
      LIMIT 1`,
     [email.toLowerCase().trim()]
