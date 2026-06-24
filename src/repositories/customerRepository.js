@@ -29,7 +29,8 @@ export default class CustomerRepository {
 
   async getById(id) {
     const res = await pool.query(
-      "SELECT * FROM customers WHERE id = $1",
+      `SELECT c.*, EXISTS(SELECT 1 FROM cuentas_corrientes cc WHERE cc.customer_id = c.id) AS tiene_cc
+       FROM customers c WHERE c.id = $1`,
       [id]
     );
     return res.rows[0];

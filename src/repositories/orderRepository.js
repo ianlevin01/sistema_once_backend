@@ -51,6 +51,7 @@ export default class OrderRepository {
                 'unit_price',  oi.unit_price,
                 'cost',        oi.cost
               )
+              ORDER BY p.name ASC
             )
             FROM order_items oi
             JOIN products p ON p.id = oi.product_id
