@@ -698,6 +698,16 @@ export default class ComprobanteService {
             const tipoMov    = esPresupuesto ? "debito" : "pago";
             const saldoDelta = esPresupuesto ? deltaEnCuenta : -deltaEnCuenta;
 
+            // Preservar la fecha original del movimiento antes de borrarlo
+            const existingMov = await client.query(
+              `SELECT created_at FROM cc_movimientos
+               WHERE cuenta_corriente_id = $1
+                 AND (order_id = $2 OR concepto LIKE '% — ' || LEFT($2::text, 8))
+               ORDER BY created_at ASC LIMIT 1`,
+              [cc.id, id]
+            );
+            const originalCreatedAt = existingMov.rows[0]?.created_at ?? order.created_at;
+
             await client.query(
               `DELETE FROM cc_movimientos
                WHERE cuenta_corriente_id = $1
@@ -707,12 +717,13 @@ export default class ComprobanteService {
             await client.query(
               `INSERT INTO cc_movimientos
                  (cuenta_corriente_id, tipo, concepto, monto, order_id,
-                  divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+                  divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
               [cc.id, tipoMov, `${tipo} — ${id.slice(0, 8)}`,
                Math.abs(newMontoEnCuenta), id,
                divisaCC, "ARS", Math.abs(newTotalARS),
-               divisaCC === "USD" ? cotizacion : null]
+               divisaCC === "USD" ? cotizacion : null,
+               originalCreatedAt]
             );
             await client.query(
               `UPDATE cuentas_corrientes SET saldo = saldo + $1, updated_at = NOW() WHERE id = $2`,
@@ -789,6 +800,115 @@ export default class ComprobanteService {
                divisaCC === "USD" ? cotizacion : null]
             );
           }
+        }
+      }
+
+      // CC cliente: comprobante no-CC → actualizar entrada visual si cambió algo
+      if ((esPresupuesto || esDevolucion) && !wasCtaCte && !isCtaCte &&
+          (totalDelta !== 0 || paymentMethodChanged || customerChanged)) {
+        try {
+          const cotizRes = await client.query(
+            `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
+            [order.negocio_id]
+          );
+          const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
+
+          if (oldCustomerId && !oldEsConsumidorFinal) {
+            const ccOld = await this.ccRepo.getOrCreate(oldCustomerId, client);
+            if (ccOld) {
+              const existingVis = await client.query(
+                `SELECT created_at FROM cc_movimientos
+                 WHERE cuenta_corriente_id = $1 AND order_id = $2 AND afecta_saldo = FALSE
+                 ORDER BY created_at ASC LIMIT 1`,
+                [ccOld.id, id]
+              );
+              const originalCreatedAt = existingVis.rows[0]?.created_at ?? order.created_at;
+              await client.query(
+                `DELETE FROM cc_movimientos WHERE cuenta_corriente_id = $1 AND order_id = $2 AND afecta_saldo = FALSE`,
+                [ccOld.id, id]
+              );
+              if (!customerChanged && newTotalARS !== 0) {
+                const divisaCC = ccOld.divisa ?? "ARS";
+                const montoEnCuenta = divisaCC === "USD" ? newTotalARS / cotizacion : newTotalARS;
+                await client.query(
+                  `INSERT INTO cc_movimientos
+                     (cuenta_corriente_id, tipo, concepto, monto, order_id, metodo_pago,
+                      divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, afecta_saldo, created_at)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, FALSE, $11)`,
+                  [ccOld.id, esPresupuesto ? "debito" : "pago",
+                   `${tipo} — ${id.slice(0, 8)}`,
+                   Math.abs(montoEnCuenta), id, newPaymentMethod,
+                   divisaCC, "ARS", Math.abs(newTotalARS),
+                   divisaCC === "USD" ? cotizacion : null,
+                   originalCreatedAt]
+                );
+              }
+            }
+          }
+          if (customerChanged && newCustomerId && !newEsConsumidorFinal && newTotalARS !== 0) {
+            const ccNew = await this.ccRepo.getOrCreate(newCustomerId, client);
+            if (ccNew) {
+              const divisaCC = ccNew.divisa ?? "ARS";
+              const montoEnCuenta = divisaCC === "USD" ? newTotalARS / cotizacion : newTotalARS;
+              await client.query(
+                `INSERT INTO cc_movimientos
+                   (cuenta_corriente_id, tipo, concepto, monto, order_id, metodo_pago,
+                    divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, afecta_saldo)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, FALSE)`,
+                [ccNew.id, esPresupuesto ? "debito" : "pago",
+                 `${tipo} — ${id.slice(0, 8)}`,
+                 Math.abs(montoEnCuenta), id, newPaymentMethod,
+                 divisaCC, "ARS", Math.abs(newTotalARS),
+                 divisaCC === "USD" ? cotizacion : null]
+              );
+            }
+          }
+        } catch (err) {
+          console.warn("CC visual update (cliente) failed (non-blocking):", err.message);
+        }
+      }
+
+      // CC proveedor: reposición/devol no-CC → actualizar entrada visual si cambió algo
+      if ((esReposicion || esDevolProv) && !wasCtaCte && !isCtaCte &&
+          order.supplier_id && (totalDelta !== 0 || paymentMethodChanged)) {
+        try {
+          const cotizRes = await client.query(
+            `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
+            [order.negocio_id]
+          );
+          const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
+          const ccProv = await this.proveedorRepo.getOrCreateCC(order.supplier_id, client);
+          if (ccProv) {
+            const divisaCC = ccProv.divisa ?? "ARS";
+            const newMontoEnCuenta = divisaCC === "USD" ? newTotalARS / cotizacion : newTotalARS;
+            const existingVis = await client.query(
+              `SELECT created_at FROM cc_movimientos_prov
+               WHERE cuenta_corriente_id = $1 AND order_id = $2 AND afecta_saldo = FALSE
+               ORDER BY created_at ASC LIMIT 1`,
+              [ccProv.id, id]
+            );
+            const originalCreatedAt = existingVis.rows[0]?.created_at ?? order.created_at;
+            await client.query(
+              `DELETE FROM cc_movimientos_prov WHERE cuenta_corriente_id = $1 AND order_id = $2 AND afecta_saldo = FALSE`,
+              [ccProv.id, id]
+            );
+            if (newMontoEnCuenta !== 0) {
+              await client.query(
+                `INSERT INTO cc_movimientos_prov
+                   (cuenta_corriente_id, tipo, concepto, monto, order_id, metodo_pago,
+                    divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, afecta_saldo, created_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, FALSE, $11)`,
+                [ccProv.id, esReposicion ? "pago" : "debito",
+                 `${esReposicion ? "Reposición" : "Devol a proveedor"} — ${id.slice(0, 8)}`,
+                 Math.abs(newMontoEnCuenta), id, newPaymentMethod,
+                 divisaCC, "ARS", Math.abs(newTotalARS),
+                 divisaCC === "USD" ? cotizacion : null,
+                 originalCreatedAt]
+              );
+            }
+          }
+        } catch (err) {
+          console.warn("CC visual update (proveedor) failed (non-blocking):", err.message);
         }
       }
 
