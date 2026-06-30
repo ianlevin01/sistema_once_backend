@@ -211,6 +211,16 @@ router.get("/cart-recommendations", resolveNegocio, async (req, res) => {
   }
 });
 
+// Reservas activas de un producto (notas de pedido que lo contienen)
+router.get("/:id/reservas", requireAuth, async (req, res) => {
+  try {
+    const result = await svc.getReservas(req.params.id);
+    return res.status(200).json(result);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
 // Obtener producto por id
 router.get("/:id", resolveNegocio, async (req, res) => {
   const result = await svc.getById(req.params.id, req.user.negocio_id);

@@ -185,6 +185,7 @@ export default class ProductRepository {
                     AND o.warehouse_id = s.warehouse_id
                     AND o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
                     AND o.status != 'cancelled'
+                    AND o.deleted_at IS NULL
                 ), 0)
               ) ORDER BY w.name
             )

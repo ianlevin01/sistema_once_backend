@@ -240,12 +240,25 @@ export default class ComprobanteService {
 
       // ── Nota → Presupuesto: descontar stock ─────────────────
       if (data.source_nota_id && esPresupuesto) {
-        for (const item of data.items) {
-          if (!item.product_id) continue;
+        // Liberar TODAS las reservas de la nota original (no solo data.items),
+        // para no dejar stock_reserva inflado cuando el usuario modificó cantidades
+        // o eliminó productos en el formulario antes de presupuestar.
+        const sourceItemsRes = await client.query(
+          `SELECT product_id, SUM(quantity)::int AS quantity
+           FROM order_items WHERE order_id = $1 AND product_id IS NOT NULL
+           GROUP BY product_id`,
+          [data.source_nota_id]
+        );
+        for (const si of sourceItemsRes.rows) {
           await client.query(
             `UPDATE products SET stock_reserva = GREATEST(0, stock_reserva - $1) WHERE id = $2`,
-            [item.quantity, item.product_id]
+            [si.quantity, si.product_id]
           );
+        }
+
+        // Descontar stock físico solo para los ítems que van al presupuesto
+        for (const item of data.items) {
+          if (!item.product_id) continue;
           await this._deductStock(client, item.product_id, item.quantity, warehouseId);
         }
 
@@ -268,6 +281,7 @@ export default class ComprobanteService {
           for (const item of data.removed_items) {
             await this.itemRepo.create(item, notaParalela.id, client);
             if (!item.product_id) continue;
+            // Re-agregar reserva para ítems que quedan en la nota paralela
             await client.query(
               `UPDATE products SET stock_reserva = stock_reserva + $1 WHERE id = $2`,
               [item.quantity, item.product_id]

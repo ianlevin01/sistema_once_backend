@@ -267,6 +267,31 @@ export default class ProductService {
     };
   }
 
+  async getReservas(productId) {
+    const { rows } = await pool.query(
+      `SELECT
+        o.id,
+        o.tipo,
+        o.created_at,
+        o.warehouse_id,
+        w.name        AS warehouse_name,
+        oi.quantity,
+        c.name        AS customer_name,
+        c.id          AS customer_id
+       FROM order_items oi
+       JOIN orders o     ON o.id  = oi.order_id
+       JOIN warehouses w ON w.id  = o.warehouse_id
+       LEFT JOIN customers c ON c.id = o.customer_id
+       WHERE oi.product_id = $1
+         AND o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web')
+         AND o.deleted_at IS NULL
+         AND o.status != 'cancelled'
+       ORDER BY o.created_at DESC`,
+      [productId]
+    );
+    return rows;
+  }
+
   async getByIds(ids, negocioId) {
     if (!ids || ids.length === 0) return [];
     const { rows } = await pool.query(

@@ -26,6 +26,7 @@ import printRoutes             from "./controllers/printRoutes.js";
 import passwordResetRoutes     from "./controllers/passwordResetRoutes.js";
 import aiAgentRoutes           from "./controllers/aiAgentRoutes.js";
 import backupRoutes            from "./controllers/backupRoutes.js";
+import recordatoriosRoutes     from "./controllers/recordatoriosRoutes.js";
 import cron                    from "node-cron";
 import { runBackup }           from "./services/backupService.js";
 import { runRecommendationBatch } from "./services/productRecommendationService.js";
@@ -82,6 +83,7 @@ app.use("/api/email-campaign",     emailCampaignRoutes);
 app.use("/api/rentabilidad",       rentabilidadRoutes);
 app.use("/api/print",              printRoutes);
 app.use("/api/backup",             backupRoutes);
+app.use("/api/recordatorios",      recordatoriosRoutes);
 
 // Server
 app.listen(PORT, "0.0.0.0", () => {
