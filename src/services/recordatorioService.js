@@ -43,7 +43,7 @@ class RecordatorioService {
          WHERE o.customer_id = c.id
            AND o.negocio_id  = $1
            AND o.deleted_at  IS NULL
-           AND o.tipo        IN ('Nota de Pedido', 'Nota de Pedido Web')
+           AND o.tipo        IN ('Presupuesto', 'Presupuesto Web')
            AND o.divisa      = 'ARS'
            AND o.total       >= 300000
          ORDER BY o.created_at DESC
@@ -60,7 +60,11 @@ class RecordatorioService {
       [negocioId]
     );
 
-    for (const row of toNotify) {
+    const { rows: recent } = await pool.query(
+      `SELECT 1 FROM recordatorios WHERE negocio_id = $1 AND created_at > NOW() - INTERVAL '4 minutes' LIMIT 1`,
+      [negocioId]
+    );
+    if (recent.length === 0) for (const row of toNotify.slice(0, 1)) {
       const dias = Math.floor((Date.now() - new Date(row.last_order_date).getTime()) / 86400000);
       await pool.query(
         `INSERT INTO recordatorios (customer_id, negocio_id, tipo, mensaje, last_order_date, last_order_total)
