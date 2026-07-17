@@ -134,11 +134,12 @@ router.delete("/:id", requireAuth, async (req, res) => {
     const { password } = req.body;
     if (!password) return res.status(400).json({ message: "Se requiere clave para eliminar" });
     const { rows } = await pool.query(
-      "SELECT password_hash FROM users WHERE negocio_id = $1 AND active = true",
+      "SELECT password_hash FROM users WHERE negocio_id = $1 AND active = true AND role = 'superadmin'",
       [req.user.negocio_id]
     );
+    if (!rows.length) return res.status(403).json({ message: "No hay superadmin configurado" });
     const valid = (await Promise.all(rows.map((u) => bcrypt.compare(password, u.password_hash)))).some(Boolean);
-    if (!valid) return res.status(403).json({ message: "Clave incorrecta" });
+    if (!valid) return res.status(403).json({ message: "Clave de superadmin incorrecta" });
     await svc.delete(req.params.id, {
       deleted_by_user_id: req.user.id,
       deleted_by_name:    req.user.name,
