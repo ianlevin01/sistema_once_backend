@@ -18,11 +18,10 @@ export async function generatePdfFromHtml(html) {
   try {
     const page = await browser.newPage();
 
-    // Cargar el HTML completo (con <head>/<style> incluidos)
-    await page.setContent(html, { waitUntil: "domcontentloaded" });
-
-    // Pequeña pausa para que los estilos se apliquen correctamente
-    await new Promise((r) => setTimeout(r, 200));
+    // Cargar el HTML completo (con <head>/<style> incluidos).
+    // "networkidle0" espera a que todas las imágenes terminen de cargarse
+    // antes de generar el PDF, necesario para catálogos con muchos productos.
+    await page.setContent(html, { waitUntil: "networkidle0", timeout: 60000 });
 
     const pdfBuffer = await page.pdf({
       format: "A4",
