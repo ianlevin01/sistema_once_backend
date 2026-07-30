@@ -260,7 +260,7 @@ router.delete("/movimientos/:movId", requireAuth, async (req, res) => {
 // GET cobranzas por rango de fecha
 router.get("/cobranzas", requireAuth, async (req, res) => {
   const { from, to } = req.query;
-  const warehouseId = req.user.role === "superadmin" ? null : req.user.warehouse_id;
+  const warehouseId = req.user.warehouse_id || null;
   try {
     const result = await svc.getCobranzas(from, to, req.user.negocio_id, warehouseId);
     return res.status(200).json(result);

@@ -20,7 +20,7 @@ router.post("/", requireAuth, async (req, res) => {
 // Listar
 router.get("/", requireAuth, async (req, res) => {
   const { from, to } = req.query;
-  const warehouseId = req.user.role === "superadmin" ? null : req.user.warehouse_id;
+  const warehouseId = req.user.warehouse_id || null;
   const result = await svc.getAll({ from, to, warehouseId, negocioId: req.user.negocio_id });
   return res.status(200).json(result);
 });
