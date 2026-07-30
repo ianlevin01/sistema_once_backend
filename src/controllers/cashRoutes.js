@@ -13,15 +13,16 @@ router.post("/", requireAuth, async (req, res) => {
     return res.status(400).json({ message: "Datos incompletos" });
   }
 
-  const result = await svc.create(req.body, req.user.warehouse_id, req.user.negocio_id);
+  const result = await svc.create(req.body, req.user.warehouse_id, req.user.negocio_id, req.user.id);
   return res.status(201).json(result);
 });
 
 // Listar
 router.get("/", requireAuth, async (req, res) => {
-  const { from, to } = req.query;
-  const warehouseId = req.user.warehouse_id || null;
-  const result = await svc.getAll({ from, to, warehouseId, negocioId: req.user.negocio_id });
+  const { from, to, personal } = req.query;
+  const userId      = personal === "true" ? req.user.id : null;
+  const warehouseId = userId ? null : (req.user.warehouse_id || null);
+  const result = await svc.getAll({ from, to, warehouseId, negocioId: req.user.negocio_id, userId });
   return res.status(200).json(result);
 });
 

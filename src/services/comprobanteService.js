@@ -1198,7 +1198,7 @@ export default class ComprobanteService {
   getById(id)     { return this.orderRepo.getById(id); }
   getAll(filters) { return this.orderRepo.getAll(filters); }
 
-  async getListado({ from, to, warehouseId, warehouseName, negocioId } = {}) {
+  async getListado({ from, to, warehouseId, warehouseName, negocioId, userId } = {}) {
     const client = await pool.connect();
     try {
       const dateFrom = from ? `${from} 00:00:00` : "1970-01-01";
@@ -1209,7 +1209,9 @@ export default class ComprobanteService {
       // El frontend ya muestra el símbolo correcto según p.divisa.
       const presParams = [dateFrom, dateTo];
       const presNegocioFilter = negocioId ? ` AND o.negocio_id = $${presParams.push(negocioId)}` : "";
-      const presWhFilter = warehouseId ? ` AND o.warehouse_id = $${presParams.push(warehouseId)}` : "";
+      const presWhFilter = userId
+        ? ` AND o.created_by_user_id = $${presParams.push(userId)}`
+        : warehouseId ? ` AND o.warehouse_id = $${presParams.push(warehouseId)}` : "";
       const presRes = await client.query(`
         SELECT
           o.id, o.tipo, o.created_at, o.vendedor, o.texto_libre, o.price_type,
@@ -1239,7 +1241,9 @@ export default class ComprobanteService {
       // Tampoco convertir — devolver total en su divisa.
       const reposParams = [dateFrom, dateTo];
       const reposNegocioFilter = negocioId ? ` AND o.negocio_id = $${reposParams.push(negocioId)}` : "";
-      const reposWhFilter = warehouseId ? ` AND o.warehouse_id = $${reposParams.push(warehouseId)}` : "";
+      const reposWhFilter = userId
+        ? ` AND o.created_by_user_id = $${reposParams.push(userId)}`
+        : warehouseId ? ` AND o.warehouse_id = $${reposParams.push(warehouseId)}` : "";
       const reposRes = await client.query(`
         SELECT
           o.id, o.tipo, o.created_at, o.vendedor, o.texto_libre,
@@ -1274,7 +1278,9 @@ export default class ComprobanteService {
       // ── Notas de Pedido (sin filtro de fecha — siempre todas) ──
       const notasParams = [];
       const notasNegocioFilter = negocioId ? ` AND o.negocio_id = $${notasParams.push(negocioId)}` : "";
-      const notasWhFilter = warehouseId ? ` AND (o.warehouse_id = $${notasParams.push(warehouseId)} OR o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web'))` : "";
+      const notasWhFilter = userId
+        ? ` AND o.created_by_user_id = $${notasParams.push(userId)}`
+        : warehouseId ? ` AND (o.warehouse_id = $${notasParams.push(warehouseId)} OR o.tipo IN ('Nota de Pedido', 'Nota de Pedido Web'))` : "";
       const notasRes = await client.query(`
         SELECT o.id, o.tipo, o.created_at, o.total, o.vendedor, o.texto_libre,
                o.customer_id, o.price_type, c.name AS customer_name,
@@ -1310,9 +1316,9 @@ export default class ComprobanteService {
       // ── Remitos ──────────────────────────────────────────────
       const remitosParams = [dateFrom, dateTo];
       const remitosNegocioFilter = negocioId ? ` AND o.negocio_id = $${remitosParams.push(negocioId)}` : "";
-      const remitosWhFilter = warehouseId
-        ? ` AND o.warehouse_id = $${remitosParams.push(warehouseId)}`
-        : "";
+      const remitosWhFilter = userId
+        ? ` AND o.user_id = $${remitosParams.push(userId)}`
+        : warehouseId ? ` AND o.warehouse_id = $${remitosParams.push(warehouseId)}` : "";
       const remitosRes = await client.query(`
         SELECT o.id, o.created_at, o.total, o.origen, o.destino,
                u.name AS vendedor

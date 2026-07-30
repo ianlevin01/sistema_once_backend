@@ -271,7 +271,7 @@ export default class CuentaCorrienteRepository {
   // ── Registrar cobranza (CC + cash_movements) ───────────────
   // tipo_mov: "haber" (default) = cliente paga → saldo baja
   //           "debe"            = cargo manual  → saldo sube, sin cash
-  async registrarCobranza(customerId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, negocio_id, warehouse_id, fecha, tipo_mov = "haber" }) {
+  async registrarCobranza(customerId, { monto, concepto, metodo_pago, divisa_cobro, cotizacion_manual, negocio_id, warehouse_id, user_id, fecha, tipo_mov = "haber" }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -304,8 +304,8 @@ export default class CuentaCorrienteRepository {
       await client.query(
         `INSERT INTO cc_movimientos
            (cuenta_corriente_id, tipo, concepto, monto, metodo_pago,
-            divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, warehouse_id, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE(($11::date)::timestamp + interval '3 hours', NOW()))`,
+            divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada, warehouse_id, user_id, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, COALESCE(($12::date)::timestamp + interval '3 hours', NOW()))`,
         [
           cuenta.id,
           tipoCC,
@@ -317,6 +317,7 @@ export default class CuentaCorrienteRepository {
           monto,
           divisaCobro !== divisa ? cotizacion : null,
           warehouse_id || null,
+          user_id || null,
           fecha || null,
         ]
       );
@@ -331,9 +332,9 @@ export default class CuentaCorrienteRepository {
       if (!esDebe) {
         const montoARS = convertir(monto, divisaCobro, "ARS", cotizacion);
         await client.query(
-          `INSERT INTO cash_movements (type, source, amount, reference_id, negocio_id, warehouse_id)
-           VALUES ('ingreso', $1, $2, $3, $4, $5)`,
-          [metodo_pago, montoARS, cuenta.id, negocio_id_resolved, warehouse_id || null]
+          `INSERT INTO cash_movements (type, source, amount, reference_id, negocio_id, warehouse_id, user_id)
+           VALUES ('ingreso', $1, $2, $3, $4, $5, $6)`,
+          [metodo_pago, montoARS, cuenta.id, negocio_id_resolved, warehouse_id || null, user_id || null]
         );
       }
 
@@ -352,7 +353,7 @@ export default class CuentaCorrienteRepository {
   }
 
   // ── Obtener cobranzas por rango de fecha ───────────────────
-  async getCobranzas(from, to, negocioId, warehouseId) {
+  async getCobranzas(from, to, negocioId, warehouseId, userId) {
     const params = [];
     let where = `WHERE m.tipo = 'pago' AND m.metodo_pago IS NOT NULL`;
 
@@ -360,7 +361,10 @@ export default class CuentaCorrienteRepository {
       params.push(negocioId);
       where += ` AND c.negocio_id = $${params.length}`;
     }
-    if (warehouseId) {
+    if (userId) {
+      params.push(userId);
+      where += ` AND m.user_id = $${params.length}`;
+    } else if (warehouseId) {
       params.push(warehouseId);
       where += ` AND m.warehouse_id = $${params.length}`;
     }

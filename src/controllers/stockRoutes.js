@@ -68,7 +68,10 @@ router.get("/movements", requireAuth, async (req, res) => {
              ELSE COALESCE(c.name, '') END AS entidad,
         COALESCE(o.vendedor, o.created_by_name, '') AS operador,
         COALESCE(w.name, '') AS deposito,
-        oi.unit_price AS precio,
+        CASE WHEN o.divisa = 'USD' AND o.cotizacion_dolar > 0
+             THEN ROUND(oi.unit_price / o.cotizacion_dolar, 2)
+             ELSE oi.unit_price END AS precio,
+        COALESCE(o.divisa, 'ARS') AS divisa,
         NULL::numeric AS entradas,
         oi.quantity::numeric AS salidas,
         'comprobante' AS tipo_mov,
@@ -95,7 +98,10 @@ router.get("/movements", requireAuth, async (req, res) => {
              ELSE COALESCE(c.name, '') END,
         COALESCE(o.vendedor, o.created_by_name, ''),
         COALESCE(w.name, ''),
-        oi.unit_price,
+        CASE WHEN o.divisa = 'USD' AND o.cotizacion_dolar > 0
+             THEN ROUND(oi.unit_price / o.cotizacion_dolar, 2)
+             ELSE oi.unit_price END,
+        COALESCE(o.divisa, 'ARS'),
         oi.quantity::numeric,
         NULL::numeric,
         'comprobante',
@@ -120,7 +126,10 @@ router.get("/movements", requireAuth, async (req, res) => {
         COALESCE(pr.name, ''),
         COALESCE(o.created_by_name, ''),
         COALESCE(w_dest.name, ''),
-        oi.unit_price,
+        CASE WHEN o.divisa = 'USD' AND o.cotizacion_dolar > 0
+             THEN ROUND(oi.unit_price / o.cotizacion_dolar, 2)
+             ELSE oi.unit_price END,
+        COALESCE(o.divisa, 'ARS'),
         oi.quantity::numeric,
         NULL::numeric,
         'comprobante',
@@ -145,7 +154,10 @@ router.get("/movements", requireAuth, async (req, res) => {
         COALESCE(pr.name, ''),
         COALESCE(o.created_by_name, ''),
         COALESCE(w_dest.name, ''),
-        oi.unit_price,
+        CASE WHEN o.divisa = 'USD' AND o.cotizacion_dolar > 0
+             THEN ROUND(oi.unit_price / o.cotizacion_dolar, 2)
+             ELSE oi.unit_price END,
+        COALESCE(o.divisa, 'ARS'),
         NULL::numeric,
         oi.quantity::numeric,
         'comprobante',
@@ -171,6 +183,7 @@ router.get("/movements", requireAuth, async (req, res) => {
         COALESCE(u.name, ''),
         COALESCE(o.origen, ''),
         oi.unit_price,
+        'ARS',
         NULL::numeric,
         oi.quantity::numeric,
         'remito',
@@ -195,6 +208,7 @@ router.get("/movements", requireAuth, async (req, res) => {
         COALESCE(u.name, ''),
         COALESCE(o.destino, ''),
         oi.unit_price,
+        'ARS',
         oi.quantity::numeric,
         NULL::numeric,
         'remito',
@@ -220,6 +234,7 @@ router.get("/movements", requireAuth, async (req, res) => {
         COALESCE(smm.created_by, ''),
         COALESCE(w.name, ''),
         NULL,
+        'ARS',
         CASE WHEN smm.delta > 0 THEN smm.delta ELSE NULL END,
         CASE WHEN smm.delta < 0 THEN ABS(smm.delta) ELSE NULL END,
         'manual',

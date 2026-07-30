@@ -3,20 +3,21 @@ import pool from "../database/db.js"
 export default class CashRepository {
   async create(mov) {
     const res = await pool.query(
-      `INSERT INTO cash_movements (type, source, amount, divisa, warehouse_id, negocio_id, description)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [mov.type, mov.source, mov.amount, mov.divisa || "ARS", mov.warehouse_id || null, mov.negocio_id, mov.description || null]
+      `INSERT INTO cash_movements (type, source, amount, divisa, warehouse_id, negocio_id, description, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [mov.type, mov.source, mov.amount, mov.divisa || "ARS", mov.warehouse_id || null, mov.negocio_id, mov.description || null, mov.user_id || null]
     );
     return res.rows[0];
   }
 
-  async getAll({ from, to, warehouseId, negocioId } = {}) {
+  async getAll({ from, to, warehouseId, negocioId, userId } = {}) {
     let query = "SELECT * FROM cash_movements WHERE 1=1";
     const params = [];
     if (negocioId)   { params.push(negocioId);             query += ` AND negocio_id = $${params.length}`; }
     if (from)        { params.push(`${from} 00:00:00`);    query += ` AND created_at >= $${params.length}`; }
     if (to)          { params.push(`${to} 23:59:59`);      query += ` AND created_at <= $${params.length}`; }
-    if (warehouseId) { params.push(warehouseId);            query += ` AND warehouse_id = $${params.length}`; }
+    if (userId)      { params.push(userId);                 query += ` AND user_id = $${params.length}`; }
+    else if (warehouseId) { params.push(warehouseId);      query += ` AND warehouse_id = $${params.length}`; }
     query += " ORDER BY created_at DESC";
     const res = await pool.query(query, params);
     return res.rows;

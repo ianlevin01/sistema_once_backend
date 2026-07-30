@@ -78,6 +78,7 @@ router.post("/cliente/:customerId/cobranza", requireAuth, async (req, res) => {
       cotizacion_manual: cotizacion_manual ? Number(cotizacion_manual) : null,
       negocio_id:       req.user.negocio_id,
       warehouse_id:     req.user.warehouse_id || null,
+      user_id:          req.user.id,
       fecha:            fecha || null,
       tipo_mov:         tipo_mov || "haber",
     });
@@ -259,10 +260,11 @@ router.delete("/movimientos/:movId", requireAuth, async (req, res) => {
 
 // GET cobranzas por rango de fecha
 router.get("/cobranzas", requireAuth, async (req, res) => {
-  const { from, to } = req.query;
-  const warehouseId = req.user.warehouse_id || null;
+  const { from, to, personal } = req.query;
+  const userId      = personal === "true" ? req.user.id : null;
+  const warehouseId = userId ? null : (req.user.warehouse_id || null);
   try {
-    const result = await svc.getCobranzas(from, to, req.user.negocio_id, warehouseId);
+    const result = await svc.getCobranzas(from, to, req.user.negocio_id, warehouseId, userId);
     return res.status(200).json(result);
   } catch (err) {
     console.error("Error en GET /cuenta-corriente/cobranzas:", err);

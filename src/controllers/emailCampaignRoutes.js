@@ -4,6 +4,7 @@ import OpenAI from "openai";
 import { requireAuth } from "./authRoutes.js";
 import { sendCampaignEmail } from "../services/emailService.js";
 import S3Service from "../services/S3Service.js";
+import whatsAppService from "../services/whatsAppService.js";
 
 const router = Router();
 const ONCEPUNTOS_ID = "00000000-0000-0000-0000-000000000001";
@@ -339,8 +340,10 @@ router.post("/send", requireAuth, async (req, res) => {
   // Envío masivo
   try {
     const { rows } = await pool.query(
-      `SELECT email FROM public.shop_users
-       WHERE negocio_id = $1 AND email IS NOT NULL AND trim(email) != ''`,
+      `SELECT su.email, c.phone
+       FROM public.shop_users su
+       LEFT JOIN customers c ON c.id = su.customer_id
+       WHERE su.negocio_id = $1 AND su.email IS NOT NULL AND trim(su.email) != ''`,
       [req.user.negocio_id]
     );
 
@@ -351,6 +354,21 @@ router.post("/send", requireAuth, async (req, res) => {
         sent++;
       } catch {
         errors++;
+      }
+    }
+
+    // Envío de WhatsApp si la funcionalidad está habilitada
+    const features = await whatsAppService.getFeatures(req.user.negocio_id).catch(() => ({}));
+    if (features?.campaign_send) {
+      const waStatus = await whatsAppService.getStatus(req.user.negocio_id).catch(() => ({}));
+      if (waStatus?.status === "connected") {
+        const waText = subject;
+        for (const { phone } of rows) {
+          if (!phone) continue;
+          whatsAppService.sendMessage(req.user.negocio_id, phone, waText).catch((err) => {
+            console.error(`[whatsapp] Error enviando a ${phone}:`, err.message);
+          });
+        }
       }
     }
 

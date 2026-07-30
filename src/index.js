@@ -27,6 +27,7 @@ import passwordResetRoutes     from "./controllers/passwordResetRoutes.js";
 import aiAgentRoutes           from "./controllers/aiAgentRoutes.js";
 import backupRoutes            from "./controllers/backupRoutes.js";
 import recordatoriosRoutes     from "./controllers/recordatoriosRoutes.js";
+import whatsappRoutes          from "./controllers/whatsappRoutes.js";
 import cron                    from "node-cron";
 import { runBackup }           from "./services/backupService.js";
 import { runRecommendationBatch } from "./services/productRecommendationService.js";
@@ -84,6 +85,7 @@ app.use("/api/rentabilidad",       rentabilidadRoutes);
 app.use("/api/print",              printRoutes);
 app.use("/api/backup",             backupRoutes);
 app.use("/api/recordatorios",      recordatoriosRoutes);
+app.use("/api/whatsapp",           whatsappRoutes);
 
 // Server
 app.listen(PORT, "0.0.0.0", () => {
