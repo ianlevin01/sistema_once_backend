@@ -171,14 +171,18 @@ export default class ComprobanteService {
         await client.query(
           `INSERT INTO cc_movimientos
              (cuenta_corriente_id, tipo, concepto, monto, order_id,
-              divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada)
-           VALUES ($1,'pago',$2,$3,$4,$5,$6,$7,$8)`,
+              metodo_pago, divisa_cuenta, divisa_cobro, monto_original, cotizacion_usada,
+              warehouse_id, user_id)
+           VALUES ($1,'pago',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
           [
             cc.id,
             `Devolución — ${orderRow.id.slice(0, 8)}`,
             montoEnCuenta, orderRow.id,
+            'Cta Cte',
             divisaCC, "ARS", totalARS,
             divisaCC === "USD" ? cotizacion : null,
+            warehouseId || null,
+            data.created_by_user_id || null,
           ]
         );
         await client.query(
@@ -190,7 +194,7 @@ export default class ComprobanteService {
       // ── CC cliente: comprobante no-CC → solo visualización ──
       // Usa SAVEPOINT para que un fallo aquí (ej: columna afecta_saldo inexistente)
       // no aborte la transacción principal.
-      if (!esCuentaCorriente && data.customer_id && !data.es_consumidor_final && (esPresupuesto || esDevolucion)) {
+      if (!esCuentaCorriente && data.customer_id && !data.es_consumidor_final && esPresupuesto) {
         try {
           await client.query("SAVEPOINT visual_entry");
           const cc = await this.ccRepo.getOrCreate(data.customer_id, client);
@@ -818,7 +822,7 @@ export default class ComprobanteService {
       }
 
       // CC cliente: comprobante no-CC → actualizar entrada visual si cambió algo
-      if ((esPresupuesto || esDevolucion) && !wasCtaCte && !isCtaCte &&
+      if (esPresupuesto && !wasCtaCte && !isCtaCte &&
           (totalDelta !== 0 || paymentMethodChanged || customerChanged)) {
         try {
           const cotizRes = await client.query(

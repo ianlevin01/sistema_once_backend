@@ -355,7 +355,7 @@ export default class CuentaCorrienteRepository {
   // ── Obtener cobranzas por rango de fecha ───────────────────
   async getCobranzas(from, to, negocioId, warehouseId, userId) {
     const params = [];
-    let where = `WHERE m.tipo = 'pago' AND m.metodo_pago IS NOT NULL`;
+    let where = `WHERE m.tipo = 'pago' AND m.metodo_pago IS NOT NULL AND (o.tipo IS NULL OR o.tipo != 'Devolucion')`;
 
     if (negocioId) {
       params.push(negocioId);
