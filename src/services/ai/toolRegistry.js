@@ -70,6 +70,78 @@ const ALL_TOOLS = [
     },
   },
 
+  {
+    name: "listar_clientes",
+    section: "clientes",
+    action: "read",
+    definition: {
+      name: "listar_clientes",
+      description: "Lista clientes con filtros opcionales. Útil para obtener clientes de una provincia, localidad, vendedor, divisa, o cualquier combinación. Devuelve hasta 100 resultados.",
+      parameters: {
+        type: "object",
+        properties: {
+          provincia:  { type: "string", description: "Filtrar por provincia (coincidencia parcial, sin distinción de mayúsculas)" },
+          localidad:  { type: "string", description: "Filtrar por localidad o ciudad (coincidencia parcial)" },
+          vendedor:   { type: "string", description: "Filtrar por nombre del vendedor asignado (coincidencia parcial)" },
+          divisa:     { type: "string", description: "Filtrar por divisa de cuenta corriente: ARS o USD" },
+          nombre:     { type: "string", description: "Filtrar por nombre del cliente (coincidencia parcial)" },
+          tiene_cc:   { type: "boolean", description: "true = solo clientes con cuenta corriente | false = solo sin cuenta corriente" },
+          limite:     { type: "number", description: "Máximo de resultados a devolver (default 50, max 100)" },
+        },
+        required: [],
+      },
+    },
+    async execute({ provincia, localidad, vendedor, divisa, nombre, tiene_cc, limite }, { negocioId }) {
+      const params = [negocioId];
+      let where = `WHERE c.negocio_id = $1`;
+
+      if (nombre)    { where += ` AND c.name      ILIKE $${params.push(`%${nombre}%`)}`; }
+      if (provincia) { where += ` AND c.provincia ILIKE $${params.push(`%${provincia}%`)}`; }
+      if (localidad) { where += ` AND c.localidad ILIKE $${params.push(`%${localidad}%`)}`; }
+      if (vendedor)  { where += ` AND c.vendedor  ILIKE $${params.push(`%${vendedor}%`)}`; }
+      if (divisa)    { where += ` AND c.divisa    ILIKE $${params.push(divisa)}`; }
+      if (tiene_cc === true)  { where += ` AND cc.id IS NOT NULL`; }
+      if (tiene_cc === false) { where += ` AND cc.id IS NULL`; }
+
+      const lim = Math.min(Number(limite) || 50, 100);
+
+      const { rows } = await pool.query(`
+        SELECT
+          c.id, c.name, c.document, c.phone, c.email,
+          c.provincia, c.localidad, c.domicilio,
+          c.vendedor, c.divisa,
+          cc.id IS NOT NULL AS tiene_cc,
+          cc.saldo, cc.divisa AS divisa_cc
+        FROM customers c
+        LEFT JOIN cuentas_corrientes cc ON cc.customer_id = c.id
+        ${where}
+        ORDER BY c.name ASC
+        LIMIT ${lim}
+      `, params);
+
+      if (rows.length === 0) return { encontrados: 0, clientes: [] };
+
+      return {
+        encontrados: rows.length,
+        clientes: rows.map((c) => ({
+          id:        c.id,
+          nombre:    c.name,
+          documento: c.document  || null,
+          telefono:  c.phone     || null,
+          email:     c.email     || null,
+          provincia: c.provincia || null,
+          localidad: c.localidad || null,
+          domicilio: c.domicilio || null,
+          vendedor:  c.vendedor  || null,
+          divisa:    c.divisa    || "ARS",
+          tiene_cc:  c.tiene_cc,
+          saldo_cc:  c.tiene_cc ? Number(c.saldo) : null,
+          divisa_cc: c.tiene_cc ? c.divisa_cc     : null,
+        })),
+      };
+    },
+  },
+
   // ── WRITE: Clientes ───────────────────────────────────────────
 
   {
