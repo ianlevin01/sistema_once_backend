@@ -17,7 +17,7 @@ function requireAuth(req, res, next) {
 }
 
 function requireSuperAdmin(req, res, next) {
-  if (req.user?.role !== "superadmin") return res.status(403).json({ message: "Sin permisos" });
+  if (req.user?.role !== "superadmin" && req.user?.role !== "admin") return res.status(403).json({ message: "Sin permisos" });
   next();
 }
 
