@@ -28,6 +28,7 @@ import aiAgentRoutes           from "./controllers/aiAgentRoutes.js";
 import backupRoutes            from "./controllers/backupRoutes.js";
 import recordatoriosRoutes     from "./controllers/recordatoriosRoutes.js";
 import whatsappRoutes          from "./controllers/whatsappRoutes.js";
+import productVariantsRoutes   from "./controllers/productVariantsRoutes.js";
 import cron                    from "node-cron";
 import { runBackup }           from "./services/backupService.js";
 import { runRecommendationBatch } from "./services/productRecommendationService.js";
@@ -86,6 +87,7 @@ app.use("/api/print",              printRoutes);
 app.use("/api/backup",             backupRoutes);
 app.use("/api/recordatorios",      recordatoriosRoutes);
 app.use("/api/whatsapp",           whatsappRoutes);
+app.use("/api/products/:productId/variants", productVariantsRoutes);
 
 // Server
 app.listen(PORT, "0.0.0.0", () => {
