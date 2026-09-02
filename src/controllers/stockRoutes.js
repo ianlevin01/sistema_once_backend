@@ -59,6 +59,13 @@ router.get("/movements", requireAuth, async (req, res) => {
     const manualDateFilter = dateFilter.replace(/o\.created_at/g, "smm.created_at");
 
     const sql = `
+      WITH movs AS (
+        SELECT
+          fecha, concepto, entidad, operador, deposito,
+          precio, divisa, entradas, salidas, tipo_mov, es_manual,
+          COALESCE(entradas, 0) - COALESCE(salidas, 0) AS delta
+        FROM (
+
       -- 1. Presupuestos (salidas)
       SELECT
         o.created_at AS fecha,
@@ -247,7 +254,27 @@ router.get("/movements", requireAuth, async (req, res) => {
         ${manualDateFilter}
       ` : ""}
 
-      ORDER BY fecha DESC
+        ) _base
+      ),
+      stock_actual AS (
+        SELECT w.name AS deposito, s.quantity AS qty
+        FROM stock s
+        JOIN warehouses w ON w.id = s.warehouse_id
+        WHERE s.product_id = $1
+      )
+      SELECT
+        m.fecha, m.concepto, m.entidad, m.operador, m.deposito,
+        m.precio, m.divisa, m.entradas, m.salidas, m.tipo_mov, m.es_manual,
+        sa.qty - COALESCE(
+          SUM(m.delta) OVER (
+            PARTITION BY m.deposito
+            ORDER BY m.fecha DESC, m.concepto DESC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+          ), 0
+        ) AS stock_despues
+      FROM movs m
+      LEFT JOIN stock_actual sa ON sa.deposito = m.deposito
+      ORDER BY m.fecha DESC
       LIMIT 1000
     `;
 
