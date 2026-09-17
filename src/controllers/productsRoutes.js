@@ -4,6 +4,7 @@ import { upload } from "../middlewares/upload.js";
 import { requireAuth } from "./authRoutes.js";
 import jwt from "jsonwebtoken";
 import pool from "../database/db.js";
+import XLSX from "xlsx";
 
 const router = Router();
 const svc = new ProductService();
@@ -158,6 +159,101 @@ router.post("/import", requireAuth, upload.single("file"), async (req, res) => {
   } catch (err) {
     console.error("Error POST /products/import:", err);
     return res.status(400).json({ message: err.message || "Error procesando Excel" });
+  }
+});
+
+// ── Exportar orden de productos activos ───────────────────────
+router.get("/export-order", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.code, p.name, p.costo_usd,
+              c.name AS category_name,
+              COALESCE(SUM(s.quantity), 0) AS stock_total
+       FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN stock s ON s.product_id = p.id
+       WHERE p.negocio_id = $1 AND p.active = true
+       GROUP BY p.id, p.code, p.name, p.costo_usd, p.created_at, c.name
+       ORDER BY p.created_at DESC`,
+      [req.user.negocio_id]
+    );
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["N°", "Código", "Nombre", "Categoría", "Costo USD", "Stock total"],
+      ...rows.map((p, i) => [
+        i + 1,
+        p.code ?? "",
+        p.name ?? "",
+        p.category_name ?? "",
+        p.costo_usd != null ? Number(p.costo_usd) : "",
+        Number(p.stock_total),
+      ])
+    ]);
+    ws["!cols"] = [{ wch: 6 }, { wch: 22 }, { wch: 50 }, { wch: 20 }, { wch: 12 }, { wch: 12 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Orden");
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    res.setHeader("Content-Disposition", "attachment; filename=orden_productos.xlsx");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    return res.send(buf);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ── Importar orden desde Excel ─────────────────────────────────
+router.post("/import-order", requireAuth, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: "Se requiere el archivo" });
+
+    const wb = XLSX.read(req.file.buffer, { type: "buffer" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+
+    // Fila 0 = encabezado, col 1 = Código
+    const orderedCodes = rows.slice(1)
+      .map((r) => String(r[1] ?? "").trim())
+      .filter(Boolean);
+
+    if (orderedCodes.length === 0)
+      return res.status(400).json({ message: "No se encontraron códigos en el archivo" });
+
+    // Todos los activos del negocio en su orden actual
+    const { rows: allProducts } = await pool.query(
+      `SELECT id, code FROM products WHERE negocio_id = $1 AND active = true ORDER BY created_at DESC`,
+      [req.user.negocio_id]
+    );
+
+    const codeToId = new Map(allProducts.map((p) => [p.code, p.id]));
+
+    // IDs en el orden del Excel (solo los que coinciden con productos activos)
+    const orderedIds = orderedCodes.map((c) => codeToId.get(c)).filter(Boolean);
+    const orderedIdsSet = new Set(orderedIds);
+
+    // Productos activos que no estaban en el Excel → van al final en su orden actual
+    const remainingIds = allProducts.map((p) => p.id).filter((id) => !orderedIdsSet.has(id));
+
+    const finalIds = [...orderedIds, ...remainingIds];
+    if (finalIds.length === 0)
+      return res.status(400).json({ message: "Ningún código del archivo coincide con productos activos" });
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const base = new Date();
+      for (let i = 0; i < finalIds.length; i++) {
+        const ts = new Date(base.getTime() - i * 1000).toISOString();
+        await client.query(`UPDATE products SET created_at = $1 WHERE id = $2`, [ts, finalIds[i]]);
+      }
+      await client.query("COMMIT");
+      return res.json({ ok: true, reordered: orderedIds.length, appended: remainingIds.length });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
   }
 });
 
