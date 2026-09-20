@@ -98,7 +98,7 @@ router.get("/last-price", requireAuth, async (req, res) => {
 router.get("/warehouses", requireAuth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, name FROM warehouses WHERE negocio_id = $1 ORDER BY name`,
+      `SELECT id, name FROM warehouses WHERE negocio_id = $1 AND active = true ORDER BY name`,
       [req.user.negocio_id]
     );
     return res.status(200).json(result.rows);

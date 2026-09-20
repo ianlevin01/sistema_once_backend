@@ -278,11 +278,11 @@ router.get("/movements", requireAuth, async (req, res) => {
       LIMIT 1000
     `;
 
-    // Stock actual del producto (suma por warehouse)
+    // Stock actual del producto (suma por warehouse activo)
     const stockRes = await pool.query(`
       SELECT w.name AS deposito, s.quantity AS stock
       FROM stock s
-      JOIN warehouses w ON w.id = s.warehouse_id
+      JOIN warehouses w ON w.id = s.warehouse_id AND w.active = true
       WHERE s.product_id = $1
       ORDER BY w.name
     `, [product_id]);

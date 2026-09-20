@@ -17,7 +17,9 @@ export default class ProductRepository {
         ) AS images,
         COALESCE(
           (SELECT json_agg(json_build_object('warehouse_id', s.warehouse_id, 'quantity', s.quantity))
-           FROM stock s WHERE s.product_id = p.id), '[]'
+           FROM stock s
+           JOIN warehouses w ON w.id = s.warehouse_id AND w.active = true
+           WHERE s.product_id = p.id), '[]'
         ) AS stock
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
@@ -106,6 +108,7 @@ export default class ProductRepository {
             (
               SELECT json_agg(json_build_object('warehouse_id', s.warehouse_id, 'quantity', s.quantity))
               FROM stock s
+              JOIN warehouses w2 ON w2.id = s.warehouse_id AND w2.active = true
               WHERE s.product_id = p.id
             ),
             '[]'
@@ -190,7 +193,7 @@ export default class ProductRepository {
               ) ORDER BY w.name
             )
             FROM stock s
-            JOIN warehouses w ON w.id = s.warehouse_id
+            JOIN warehouses w ON w.id = s.warehouse_id AND w.active = true
             WHERE s.product_id = p.id
           ),
           '[]'
