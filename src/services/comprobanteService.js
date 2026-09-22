@@ -50,14 +50,14 @@ export default class ComprobanteService {
       // ── Warehouse ───────────────────────────────────────────
       // warehouseId  → se guarda en orders.warehouse_id (warehouse del creador → filtrado/visibilidad)
       // stockWarehouseId → donde realmente se mueve el stock (destino para repos, origen para devolProv)
-      let warehouseId = null;
-      if (data.user_id) {
+      // El warehouse seleccionado en el formulario tiene prioridad; el del usuario es fallback
+      let warehouseId = data.warehouse_id || null;
+      if (!warehouseId && data.user_id) {
         const userRes = await client.query(
           `SELECT warehouse_id FROM users WHERE id = $1`, [data.user_id]
         );
         warehouseId = userRes.rows[0]?.warehouse_id || null;
       }
-      if (!warehouseId) warehouseId = data.warehouse_id || null;
 
       const stockWarehouseId = (esReposicion || esDevolProv)
         ? (data.destino_warehouse_id || null)
