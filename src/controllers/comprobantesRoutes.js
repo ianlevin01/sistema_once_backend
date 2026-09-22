@@ -61,16 +61,17 @@ router.put("/:id", requireAuth, async (req, res) => {
 
 // ── Listado agrupado para CajaListado ─────────────────────────
 router.get("/listado", requireAuth, async (req, res) => {
-  const { from, to, personal } = req.query;
-  const userId = personal === "true" ? req.user.id : null;
+  const { from, to, personal, todo } = req.query;
+  const esTodo = todo === "true" && req.user.role === "superadmin";
+  const userId = esTodo ? null : (personal === "true" ? req.user.id : null);
   try {
     const result = await svc.getListado({
       from,
       to,
       negocioId:     req.user.negocio_id,
       userId:        userId || null,
-      warehouseId:   userId ? null : (req.user.warehouse_id || null),
-      warehouseName: userId ? null : (req.user.warehouse_name || null),
+      warehouseId:   esTodo ? null : (userId ? null : (req.user.warehouse_id || null)),
+      warehouseName: esTodo ? null : (userId ? null : (req.user.warehouse_name || null)),
     });
     return res.status(200).json(result);
   } catch (err) {
