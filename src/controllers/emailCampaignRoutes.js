@@ -7,7 +7,6 @@ import S3Service from "../services/S3Service.js";
 import whatsAppService from "../services/whatsAppService.js";
 
 const router = Router();
-const ONCEPUNTOS_ID = "00000000-0000-0000-0000-000000000001";
 
 const s3 = new S3Service();
 
@@ -206,12 +205,12 @@ const PRODUCT_SELECT = `
 `;
 
 // Ejecuta el tool que el AI solicitó y devuelve el resultado como string JSON
-async function executeTool(name, args) {
+async function executeTool(name, args, negocioId) {
   try {
     if (name === "search_products_by_name") {
       const { rows } = await pool.query(
         PRODUCT_SELECT + " AND p.name ILIKE $2 ORDER BY p.name ASC LIMIT 5",
-        [ONCEPUNTOS_ID, `%${args.query}%`]
+        [negocioId, `%${args.query}%`]
       );
       return formatProductRows(rows);
     }
@@ -219,7 +218,7 @@ async function executeTool(name, args) {
     if (name === "search_products_by_code") {
       const { rows } = await pool.query(
         PRODUCT_SELECT + " AND p.code ILIKE $2 ORDER BY p.name ASC LIMIT 5",
-        [ONCEPUNTOS_ID, `%${args.code}%`]
+        [negocioId, `%${args.code}%`]
       );
       return formatProductRows(rows);
     }
@@ -227,7 +226,7 @@ async function executeTool(name, args) {
     if (name === "search_products_by_category") {
       const { rows } = await pool.query(
         PRODUCT_SELECT + " AND c.name ILIKE $2 ORDER BY p.name ASC LIMIT 8",
-        [ONCEPUNTOS_ID, `%${args.category}%`]
+        [negocioId, `%${args.category}%`]
       );
       return formatProductRows(rows);
     }
@@ -288,7 +287,7 @@ router.post("/ai-chat", requireAuth, async (req, res) => {
         // Ejecutar cada tool call y agregar los resultados
         for (const tc of choice.message.tool_calls) {
           const args = JSON.parse(tc.function.arguments);
-          const result = await executeTool(tc.function.name, args);
+          const result = await executeTool(tc.function.name, args, req.user.negocio_id);
           apiMessages.push({
             role:         "tool",
             tool_call_id: tc.id,
