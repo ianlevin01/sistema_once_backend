@@ -3,21 +3,58 @@ import pool from "../database/db.js";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const VISION_PROMPT = `Sos un asistente que lee fotos de comprobantes/facturas de compra o venta de productos (mayorista).
+const VISION_PROMPT = `Sos un asistente que lee fotos de comprobantes/facturas de compra o venta de productos (mayorista, Argentina).
 
 Analizá la imagen y extraé cada línea de producto. Devolvé SOLO un JSON con esta forma exacta:
-{"items": [{"codigo": "...", "nombre": "...", "cantidad": N, "precio_unitario": N}]}
+{"divisa": "ARS" o "USD", "items": [{"codigo": "...", "nombre": "...", "cantidad": N, "precio_unitario": N}]}
 
 Reglas:
+- "divisa": la moneda en la que están expresados los precios del comprobante.
+  - Usá "USD" SOLO si ves indicadores explícitos de dólares: "U$S", "USD", "US$", "u$d", o la palabra "dólares"/"dolares"/"dollars".
+  - El símbolo "$" solo, SIN ninguna de esas marcas, es PESOS ARGENTINOS — es la convención más común en Argentina. No asumas dólares solo por ver "$".
+  - Si tenés dudas o no hay ninguna marca de moneda visible, respondé "ARS".
 - "codigo": el código de producto tal como aparece impreso (puede estar incompleto, cortado, o con guiones/espacios). Si no hay código visible en la línea, usá cadena vacía "".
 - "nombre": la descripción del producto tal como aparece.
 - "cantidad": cantidad de unidades, como número. Si no es legible, usá 1.
-- "precio_unitario": el precio POR UNIDAD (no el subtotal de la línea), como número sin símbolos de moneda ni separadores de miles (usá punto decimal). Si la columna muestra el subtotal de la línea en vez del precio unitario, calculá precio_unitario = subtotal / cantidad.
+- "precio_unitario": el precio POR UNIDAD (no el subtotal de la línea), como número sin símbolos de moneda ni separadores de miles (usá punto decimal), en la divisa que indicaste en "divisa". Si la columna muestra el subtotal de la línea en vez del precio unitario, calculá precio_unitario = subtotal / cantidad. Ejemplo de formato correcto: 1500.5 (NO "1.500,50", NO "$1.500", NO "1,500.50").
 - Ignorá líneas que no sean productos (totales, subtotales, impuestos, encabezados, datos del emisor/receptor).
-- Si no podés leer la imagen o no hay productos, devolvé {"items": []}.`;
+- Si no podés leer la imagen o no hay productos, devolvé {"divisa": "ARS", "items": []}.`;
 
 const VERIFY_MODEL = "gpt-4o-mini";
 const VISION_MODEL = "gpt-4o";
+
+// La IA de visión a veces devuelve el número con formato no estándar pese al
+// prompt (separadores de miles, símbolo de moneda colado, coma decimal estilo
+// argentino). Number() directo falla silenciosamente a NaN en esos casos, y
+// eso terminaba guardándose como precio 0. Este parser intenta limpiar los
+// formatos más comunes antes de darse por vencido.
+function parseFlexibleNumber(raw) {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : 0;
+  let s = String(raw ?? "").trim();
+  if (!s) return 0;
+
+  let n = Number(s);
+  if (Number.isFinite(n)) return n;
+
+  s = s.replace(/u\$d|us\$|u\$s|usd|ars|\$|\s/gi, "");
+  n = Number(s);
+  if (Number.isFinite(n)) return n;
+
+  const hasComma = s.includes(",");
+  const hasDot   = s.includes(".");
+  if (hasComma && hasDot) {
+    // Mezcla de separadores: el último símbolo no-dígito es el decimal, el resto son de miles.
+    const lastSep = Math.max(s.lastIndexOf(","), s.lastIndexOf("."));
+    const intPart  = s.slice(0, lastSep).replace(/[.,]/g, "");
+    const decPart  = s.slice(lastSep + 1).replace(/[^\d]/g, "");
+    n = Number(decPart ? `${intPart}.${decPart}` : intPart);
+  } else if (hasComma) {
+    // Solo coma, sin punto: tratarla como separador de miles (ej. "1,500" = 1500).
+    n = Number(s.replace(/,/g, ""));
+  }
+
+  return Number.isFinite(n) ? n : 0;
+}
 
 export default class ReceiptScanService {
   // ── Paso 1: IA de visión extrae las líneas de la foto ─────────
@@ -41,19 +78,39 @@ export default class ReceiptScanService {
     try {
       parsed = JSON.parse(response.choices[0]?.message?.content || "{}");
     } catch {
-      return [];
+      return { divisa: "ARS", items: [] };
     }
-    return Array.isArray(parsed.items) ? parsed.items : [];
+    return {
+      divisa: parsed.divisa === "USD" ? "USD" : "ARS",
+      items:  Array.isArray(parsed.items) ? parsed.items : [],
+    };
   }
 
   // ── Paso 2: matchear cada línea contra el catálogo ────────────
+  // Si la foto está en USD, convierte cada precio a su equivalente en ARS con
+  // la cotización actual del negocio ANTES de matchear — el comprobante nuevo
+  // arranca sin cliente/proveedor (divisa ARS por default), así que el valor
+  // numérico que se precarga tiene que ser el que corresponde en pesos.
   // Devuelve { matched: [{id, code, name, quantity, unit_price}], unmatched: [raw items] }
-  async matchProducts(rawItems, negocioId) {
+  async matchProducts(rawItems, negocioId, divisa = "ARS") {
+    let items = rawItems;
+    if (divisa === "USD") {
+      const cotizRes = await pool.query(
+        `SELECT cotizacion_dolar FROM price_config WHERE negocio_id = $1 LIMIT 1`,
+        [negocioId]
+      );
+      const cotizacion = Number(cotizRes.rows[0]?.cotizacion_dolar || 1000);
+      items = rawItems.map((raw) => ({
+        ...raw,
+        precio_unitario: parseFlexibleNumber(raw.precio_unitario) * cotizacion,
+      }));
+    }
+
     const matched = [];
     const unmatched = [];
     const pendingVerification = []; // { raw, candidates }
 
-    for (const raw of rawItems) {
+    for (const raw of items) {
       const codigo = String(raw.codigo || "").trim();
       if (!codigo) {
         unmatched.push(raw);
@@ -104,12 +161,13 @@ export default class ReceiptScanService {
   }
 
   _toMatchedItem(product, raw) {
+    const qty = parseFlexibleNumber(raw.cantidad);
     return {
       product_id: product.id,
       code:       product.code,
       name:       product.name,
-      quantity:   Number(raw.cantidad) > 0 ? Number(raw.cantidad) : 1,
-      unit_price: Number(raw.precio_unitario) || 0,
+      quantity:   qty > 0 ? qty : 1,
+      unit_price: parseFlexibleNumber(raw.precio_unitario),
     };
   }
 

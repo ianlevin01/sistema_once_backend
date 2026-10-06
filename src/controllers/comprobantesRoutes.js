@@ -77,8 +77,8 @@ router.post("/scan", requireAuth, upload.single("image"), async (req, res) => {
     const imageKey = await s3.upload(req.file, "comprobantes-scans");
     const base64   = req.file.buffer.toString("base64");
 
-    const rawItems            = await scanSvc.analyzeImage(base64, req.file.mimetype);
-    const { matched, unmatched } = await scanSvc.matchProducts(rawItems, req.user.negocio_id);
+    const { divisa, items: rawItems } = await scanSvc.analyzeImage(base64, req.file.mimetype);
+    const { matched, unmatched } = await scanSvc.matchProducts(rawItems, req.user.negocio_id, divisa);
 
     return res.status(200).json({
       image_key: imageKey,
