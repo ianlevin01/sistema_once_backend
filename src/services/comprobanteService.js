@@ -5,6 +5,7 @@ import OrderItemRepository from "../repositories/orderItemRepository.js";
 import PaymentRepository from "../repositories/paymentRepository.js";
 import CuentaCorrienteRepository from "../repositories/cuentaCorrienteRepository.js";
 import ProveedorRepository from "../repositories/proveedorRepository.js";
+import S3Service from "./S3Service.js";
 
 export default class ComprobanteService {
   orderRepo     = new OrderRepository();
@@ -12,6 +13,15 @@ export default class ComprobanteService {
   paymentRepo   = new PaymentRepository();
   ccRepo        = new CuentaCorrienteRepository();
   proveedorRepo = new ProveedorRepository();
+  s3            = new S3Service();
+
+  // Agrega scan_image_url a partir de scan_image_key, si la orden tiene una foto asociada.
+  _withImageUrl(row) {
+    if (!row) return row;
+    return row.scan_image_key
+      ? { ...row, scan_image_url: this.s3.getPublicUrl(row.scan_image_key) }
+      : row;
+  }
 
   // ─────────────────────────────────────────────────────────────
   // CREAR
@@ -110,8 +120,9 @@ export default class ComprobanteService {
           customer_id, supplier_id, user_id, warehouse_id,
           total, profit, status, tipo, vendedor, price_type, texto_libre,
           es_consumidor_final, consumidor_final_nombre, divisa, destino, negocio_id,
-          created_by_user_id, created_by_name, descuento_pct, cotizacion_dolar
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+          created_by_user_id, created_by_name, descuento_pct, cotizacion_dolar,
+          scan_image_key
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
         RETURNING *
       `, [
         data.customer_id  || null,
@@ -132,6 +143,7 @@ export default class ComprobanteService {
         data.created_by_name    || null,
         descuentoPct,
         preciosEnUSD ? cotizacion : null,
+        data.scan_image_key || null,
       ]);
       const orderRow = order.rows[0];
 
@@ -1199,8 +1211,11 @@ export default class ComprobanteService {
   // ─────────────────────────────────────────────────────────────
   // LECTURA
   // ─────────────────────────────────────────────────────────────
-  getById(id)     { return this.orderRepo.getById(id); }
-  getAll(filters) { return this.orderRepo.getAll(filters); }
+  async getById(id) { return this._withImageUrl(await this.orderRepo.getById(id)); }
+  async getAll(filters) {
+    const rows = await this.orderRepo.getAll(filters);
+    return rows.map((r) => this._withImageUrl(r));
+  }
 
   async getListado({ from, to, warehouseId, warehouseName, negocioId, userId } = {}) {
     const client = await pool.connect();
@@ -1224,6 +1239,7 @@ export default class ComprobanteService {
           o.total,
           o.created_by_name, o.edited_by_name,
           o.deleted_at, o.deleted_by_name,
+          o.scan_image_key,
           CASE
             WHEN o.es_consumidor_final THEN COALESCE(o.consumidor_final_nombre, 'Consumidor Final')
             ELSE COALESCE(c.name, pr.name)
@@ -1257,7 +1273,8 @@ export default class ComprobanteService {
           COALESCE(NULLIF(o.divisa, ''), 'ARS') AS divisa,
           o.total,
           o.created_by_name, o.edited_by_name,
-          o.deleted_at, o.deleted_by_name
+          o.deleted_at, o.deleted_by_name,
+          o.scan_image_key
         FROM orders o
         LEFT JOIN proveedores pr ON pr.id = o.supplier_id
         LEFT JOIN warehouses  w  ON w.id  = o.warehouse_id
@@ -1347,8 +1364,8 @@ export default class ComprobanteService {
       }
 
       return {
-        presupuestos: presRes.rows,
-        reposiciones: reposConItems,
+        presupuestos: presRes.rows.map((r) => this._withImageUrl(r)),
+        reposiciones: reposConItems.map((r) => this._withImageUrl(r)),
         notasPedido:  notasConItems,
         remitos:      remitosConItems,
       };

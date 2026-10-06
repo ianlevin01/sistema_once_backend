@@ -9,7 +9,7 @@ import { v4 as uuid } from "uuid";
 
 export default class S3Service {
 
-  async upload(file) {
+  async upload(file, prefix = "products") {
     const s3 = new S3Client({
   region: "sa-east-1",
   credentials: {
@@ -20,7 +20,7 @@ export default class S3Service {
 
 const BUCKET ="onces3";
 
-    const key = `products/${uuid()}-${file.originalname}`;
+    const key = `${prefix}/${uuid()}-${file.originalname}`;
 
     await s3.send(new PutObjectCommand({
       Bucket: BUCKET,

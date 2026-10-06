@@ -2,10 +2,15 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import pool from "../database/db.js";
 import ComprobanteService from "../services/comprobanteService.js";
+import ReceiptScanService from "../services/receiptScanService.js";
+import S3Service from "../services/S3Service.js";
+import { upload } from "../middlewares/upload.js";
 import { requireAuth } from "./authRoutes.js";
 
-const router = Router();
-const svc    = new ComprobanteService();
+const router  = Router();
+const svc     = new ComprobanteService();
+const scanSvc = new ReceiptScanService();
+const s3      = new S3Service();
 
 // ── Crear comprobante ─────────────────────────────────────────
 router.post("/", requireAuth, async (req, res) => {
@@ -60,6 +65,33 @@ router.put("/:id", requireAuth, async (req, res) => {
 });
 
 // ── Listado agrupado para CajaListado ─────────────────────────
+// ── Escanear foto de comprobante (IA) ──────────────────────────
+// Sube la imagen a S3, la analiza con IA de visión, matchea cada línea
+// contra el catálogo (código exacto, o fragmentos del código + verificación
+// semántica del nombre) y devuelve los items ya resueltos para precargar
+// un comprobante nuevo. No crea el comprobante — eso lo hace el usuario
+// después de revisar/completar el resto de los datos.
+router.post("/scan", requireAuth, upload.single("image"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: "Se requiere una imagen" });
+  try {
+    const imageKey = await s3.upload(req.file, "comprobantes-scans");
+    const base64   = req.file.buffer.toString("base64");
+
+    const rawItems            = await scanSvc.analyzeImage(base64, req.file.mimetype);
+    const { matched, unmatched } = await scanSvc.matchProducts(rawItems, req.user.negocio_id);
+
+    return res.status(200).json({
+      image_key: imageKey,
+      image_url: s3.getPublicUrl(imageKey),
+      items:     matched,
+      unmatched,
+    });
+  } catch (err) {
+    console.error("Error en POST /comprobantes/scan:", err);
+    return res.status(500).json({ message: err.message || "Error analizando la imagen" });
+  }
+});
+
 router.get("/listado", requireAuth, async (req, res) => {
   const { from, to, personal, todo } = req.query;
   const esTodo = todo === "true" && req.user.role === "superadmin";
