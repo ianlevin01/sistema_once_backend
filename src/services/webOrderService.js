@@ -61,6 +61,7 @@ export default class WebOrderService {
               to:           emailTo,
               customerName: emailName,
               orderId:      id,
+              orderNumber:  webOrder.numero,
               items:        webOrder.items,
               total:        webOrder.total,
             }).catch(() => {});
@@ -197,6 +198,7 @@ export default class WebOrderService {
           to:           email,
           customerName: full.customer_name,
           orderId:      full.id,
+          orderNumber:  full.numero,
           items:        full.items || [],
           total:        full.total,
           observaciones: full.observaciones,

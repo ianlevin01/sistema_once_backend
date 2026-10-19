@@ -244,7 +244,7 @@ export default class ComprobanteService {
           const woRes = await client.query(
             `SELECT COALESCE(c.email, w.customer_email) AS email,
                     COALESCE(c.name,  w.customer_name)  AS name,
-                    w.total, w.id
+                    w.total, w.id, w.numero
              FROM web_orders w
              LEFT JOIN customers c ON c.id = w.customer_id
              WHERE w.id = $1`,
@@ -446,6 +446,7 @@ export default class ComprobanteService {
           to:           _completionEmail.email,
           customerName: _completionEmail.name,
           orderId:      _completionEmail.id,
+          orderNumber:  _completionEmail.numero,
           total:        _completionEmail.total,
         }).catch(() => {});
       }

@@ -53,10 +53,12 @@ function shell(bodyHtml) {
 </body></html>`;
 }
 
-export async function sendOrderReceivedEmail({ to, customerName, orderId, items, total, observaciones }) {
+export async function sendOrderReceivedEmail({ to, customerName, orderId, orderNumber, items, total, observaciones }) {
   if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return;
   if (!to) return;
-  const shortId = String(orderId).slice(-6).toUpperCase();
+  // Número que se ve en el sistema (sección Pedidos Web). Si no hay (negocios sin
+  // numeración secuencial), se cae al código corto de siempre para no romper nada.
+  const shortId = orderNumber != null ? orderNumber : String(orderId).slice(-6).toUpperCase();
   const html = shell(`
     <div style="background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border:1.5px solid #4ade80;border-radius:12px;padding:22px 24px;margin-bottom:28px;text-align:center;">
       <div style="font-size:40px;margin-bottom:8px;">🎉</div>
@@ -103,9 +105,9 @@ export async function sendOrderReceivedEmail({ to, customerName, orderId, items,
   }
 }
 
-export async function sendOrderPreparationEmail({ to, customerName, orderId, items, total }) {
+export async function sendOrderPreparationEmail({ to, customerName, orderId, orderNumber, items, total }) {
   if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return;
-  const shortId = String(orderId).slice(-6).toUpperCase();
+  const shortId = orderNumber != null ? orderNumber : String(orderId).slice(-6).toUpperCase();
   const html = shell(`
     <div style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:10px;padding:18px 20px;margin-bottom:24px;">
       <p style="margin:0;font-size:17px;font-weight:700;color:#15803d;">🔧 Tu pedido está en preparación</p>
@@ -129,9 +131,9 @@ export async function sendOrderPreparationEmail({ to, customerName, orderId, ite
   }
 }
 
-export async function sendOrderCompletedEmail({ to, customerName, orderId, items, total }) {
+export async function sendOrderCompletedEmail({ to, customerName, orderId, orderNumber, items, total }) {
   if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return;
-  const shortId = String(orderId).slice(-6).toUpperCase();
+  const shortId = orderNumber != null ? orderNumber : String(orderId).slice(-6).toUpperCase();
   const html = shell(`
     <div style="background:#eff6ff;border:1.5px solid #93c5fd;border-radius:10px;padding:18px 20px;margin-bottom:24px;">
       <p style="margin:0;font-size:17px;font-weight:700;color:#1d4ed8;">✅ ¡Tu pedido fue completado!</p>
