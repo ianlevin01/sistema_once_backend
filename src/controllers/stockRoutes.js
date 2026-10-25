@@ -236,7 +236,9 @@ router.get("/movements", requireAuth, async (req, res) => {
       -- 6. Ajustes manuales y Excel import
       SELECT
         smm.created_at,
-        CASE WHEN smm.source = 'excel' THEN 'Excel Import' ELSE 'Ajuste Manual' END,
+        CASE WHEN smm.source = 'excel' THEN 'Excel Import'
+             WHEN smm.source = 'stock_previo' THEN 'Stock previo'
+             ELSE 'Ajuste Manual' END,
         COALESCE(smm.created_by, ''),
         COALESCE(smm.created_by, ''),
         COALESCE(w.name, ''),
