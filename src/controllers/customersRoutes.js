@@ -1,4 +1,5 @@
 import { Router } from "express";
+import bcrypt from "bcrypt";
 import CustomerService from "../services/customerService.js";
 import CuentaCorrienteRepository from "../repositories/cuentaCorrienteRepository.js";
 import { requireAuth } from "./authRoutes.js";
@@ -86,8 +87,29 @@ router.put("/:id", requireAuth, async (req, res) => {
   return res.status(200).json(result);
 });
 
-// Eliminar cliente
+// Eliminar cliente — requiere contraseña del superadmin logueado
 router.delete("/:id", requireAuth, async (req, res) => {
+  const { admin_password } = req.body || {};
+
+  if (req.user.role !== "superadmin") {
+    return res.status(403).json({ message: "Solo un superadministrador puede eliminar clientes" });
+  }
+  if (!admin_password || !admin_password.trim()) {
+    return res.status(400).json({ message: "Contraseña de superadministrador requerida" });
+  }
+
+  try {
+    const userRes = await pool.query(`SELECT password_hash FROM users WHERE id = $1`, [req.user.id]);
+    const user = userRes.rows[0];
+    if (!user) return res.status(500).json({ message: "Usuario no encontrado" });
+
+    const passwordValid = await bcrypt.compare(admin_password, user.password_hash);
+    if (!passwordValid) return res.status(403).json({ message: "Contraseña incorrecta" });
+  } catch (err) {
+    console.error("Error validando contraseña:", err);
+    return res.status(500).json({ message: "Error validando contraseña" });
+  }
+
   await svc.delete(req.params.id);
   return res.status(200).json({ message: "Cliente eliminado" });
 });
