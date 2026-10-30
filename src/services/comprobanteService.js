@@ -342,6 +342,23 @@ export default class ComprobanteService {
         }
       }
 
+      // ── Reposición → reactivar productos inactivos (configurable) ──
+      if (esReposicion) {
+        const negocioCfg = await client.query(
+          `SELECT auto_activar_en_reposicion FROM negocios WHERE id = $1`,
+          [data.negocio_id]
+        );
+        if (negocioCfg.rows[0]?.auto_activar_en_reposicion) {
+          const productIds = [...new Set(data.items.map((i) => i.product_id).filter(Boolean))];
+          if (productIds.length) {
+            await client.query(
+              `UPDATE products SET active = true WHERE id = ANY($1::uuid[]) AND active = false`,
+              [productIds]
+            );
+          }
+        }
+      }
+
       // ── Reposición → acreditar CC proveedor (solo si Cta Cte) ──
       if (esReposicion && esCuentaCorriente && data.supplier_id && totalARS > 0) {
         await this.proveedorRepo.acreditarReposicion(

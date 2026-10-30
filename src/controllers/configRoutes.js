@@ -94,6 +94,38 @@ router.put("/precios", requireAuth, async (req, res) => {
   }
 });
 
+// GET /config/reposicion-auto-activar
+router.get("/reposicion-auto-activar", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT auto_activar_en_reposicion FROM negocios WHERE id = $1`,
+      [req.user.negocio_id]
+    );
+    return res.json({ auto_activar_en_reposicion: rows[0]?.auto_activar_en_reposicion ?? false });
+  } catch (err) {
+    console.error("Error GET /config/reposicion-auto-activar:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
+// PATCH /config/reposicion-auto-activar
+router.patch("/reposicion-auto-activar", requireAuth, async (req, res) => {
+  const { auto_activar_en_reposicion } = req.body;
+  if (typeof auto_activar_en_reposicion !== "boolean") {
+    return res.status(400).json({ message: "auto_activar_en_reposicion debe ser boolean" });
+  }
+  try {
+    await pool.query(
+      `UPDATE negocios SET auto_activar_en_reposicion = $1 WHERE id = $2`,
+      [auto_activar_en_reposicion, req.user.negocio_id]
+    );
+    return res.json({ auto_activar_en_reposicion });
+  } catch (err) {
+    console.error("Error PATCH /config/reposicion-auto-activar:", err);
+    return res.status(500).json({ message: "Error interno" });
+  }
+});
+
 // GET /config/marketing
 router.get("/marketing", requireAuth, async (req, res) => {
   try {
